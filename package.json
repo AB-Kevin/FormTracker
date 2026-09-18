@@ -1,0 +1,42 @@
+{
+  "name": "formtracker",
+  "version": "0.0.1",
+  "description": "FormTracker - import a mailing list, send email/paper form requests, and track who has responded",
+  "main": "main.js",
+  "author": "",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^43.4.1",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.formtracker.app",
+    "productName": "FormTracker",
+    "files": [
+      "main.js",
+      "preload.js",
+      "db/**/*",
+      "lib/**/*",
+      "renderer/**/*",
+      "templates/**/*"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "dependencies": {
+    "nodemailer": "^6.9.16",
+    "papaparse": "^5.4.1",
+    "pdf-lib": "^1.17.1",
+    "uuid": "^9.0.1",
+    "xlsx": "^0.18.5"
+  }
+}
