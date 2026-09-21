@@ -14,6 +14,7 @@ const { generatePaperLetter } = require("./lib/paperMerge");
 const mailer = require("./lib/mailer");
 const gravityForms = require("./lib/gravityForms");
 const { generateToken } = require("./lib/tokens");
+const { checkForUpdate } = require("./lib/updateCheck");
 
 const SYNC_INTERVAL_MS = 5 * 60 * 1000;
 let mainWindow = null;
@@ -503,5 +504,10 @@ ipcMain.handle("sync:run", async () => runSync());
 
 ipcMain.handle("shell:open-path", async (event, filePath) => shell.openPath(filePath));
 ipcMain.handle("shell:show-in-folder", async (event, filePath) => shell.showItemInFolder(filePath));
+ipcMain.handle("shell:open-external", async (event, url) => {
+  if (!/^https:\/\//i.test(url)) throw new Error("Only https:// links can be opened externally.");
+  return shell.openExternal(url);
+});
 ipcMain.handle("app:get-data-dir", async () => store.getDataDir());
 ipcMain.handle("app:get-version", async () => app.getVersion());
+ipcMain.handle("app:check-for-update", async () => checkForUpdate(app.getVersion()));

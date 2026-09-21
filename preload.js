@@ -46,6 +46,8 @@ contextBridge.exposeInMainWorld("api", {
 
   openPath: (filePath) => ipcRenderer.invoke("shell:open-path", filePath),
   showInFolder: (filePath) => ipcRenderer.invoke("shell:show-in-folder", filePath),
+  openExternal: (url) => ipcRenderer.invoke("shell:open-external", url),
   getDataDir: () => ipcRenderer.invoke("app:get-data-dir"),
   getVersion: () => ipcRenderer.invoke("app:get-version"),
+  checkForUpdate: () => ipcRenderer.invoke("app:check-for-update"),
 });

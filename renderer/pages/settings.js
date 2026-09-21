@@ -4,6 +4,7 @@ window.Pages.settings = {
   async render(container) {
     const settings = await window.api.getSettings();
     const dataDir = await window.api.getDataDir();
+    const version = await window.api.getVersion();
 
     container.innerHTML = `
       <h1>Settings</h1>
@@ -62,6 +63,15 @@ window.Pages.settings = {
           <button class="btn secondary" id="open-data-dir-btn" type="button">Open folder</button>
         </div>
       </div>
+
+      <div class="panel">
+        <h2 style="margin-top:0">Updates</h2>
+        <p class="hint">You're running version ${escapeHtml(version)}.</p>
+        <div class="row">
+          <button class="btn secondary" id="check-update-btn" type="button">Check for updates</button>
+          <span id="update-status" class="hint"></span>
+        </div>
+      </div>
     `;
 
     qs("#save-smtp-btn", container).addEventListener("click", async () => {
@@ -92,5 +102,35 @@ window.Pages.settings = {
     });
 
     qs("#open-data-dir-btn", container).addEventListener("click", () => window.api.openPath(dataDir));
+
+    qs("#check-update-btn", container).addEventListener("click", async () => {
+      const btn = qs("#check-update-btn", container);
+      const status = qs("#update-status", container);
+      btn.disabled = true;
+      btn.textContent = "Checking…";
+      status.textContent = "";
+      try {
+        const result = await window.api.checkForUpdate();
+        if (result.hasUpdate) {
+          status.innerHTML = `Update available: <strong>${escapeHtml(result.latestVersion)}</strong> — `;
+          const link = document.createElement("a");
+          link.href = "#";
+          link.textContent = "download the latest release";
+          link.addEventListener("click", (e) => {
+            e.preventDefault();
+            window.api.openExternal(result.url);
+          });
+          status.appendChild(link);
+        } else if (result.latestVersion) {
+          status.textContent = `You're up to date (latest release is ${result.latestVersion}).`;
+        } else {
+          status.textContent = "No releases have been published yet.";
+        }
+      } catch (err) {
+        status.textContent = `Couldn't check for updates: ${err.message}`;
+      }
+      btn.disabled = false;
+      btn.textContent = "Check for updates";
+    });
   },
 };
