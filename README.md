@@ -4,7 +4,7 @@ A desktop tool to send form requests to a mailing list — by email or paper mai
 
 ## What it does
 
-1. Import a mailing list from a CSV or spreadsheet file. Any column not explicitly mapped is kept and can still be used to select recipients.
+1. Import a mailing list from a CSV or spreadsheet file. Any column not explicitly mapped is kept and can still be used to select recipients. Map a column to **ID** and re-importing later updates any contact whose ID matches, in place, instead of creating a duplicate — so a refreshed list keeps its mailing/tracking history.
 2. Build a mailing by filtering the list on any field (e.g. "Committee = Finance").
 3. Contacts with an email address get the email version; everyone else gets the paper version.
 4. Email and paper mailings use separate templates.
@@ -43,7 +43,7 @@ FormTracker never needs an inbound connection to your computer — it only reach
 ## Typical workflow
 
 1. **Import List** — upload your CSV/spreadsheet, map columns, import.
-2. **Templates** — create one email template and one paper template. Use `{{name}}`, `{{email}}`, `{{addressLine1}}`, `{{form_link}}`, or `{{extra.ColumnName}}` for any other imported column. Attach a fillable PDF to the email template.
+2. **Templates** — create one email template and one paper template. Use `{{externalId}}`, `{{name}}`, `{{email}}`, `{{addressLine1}}`, `{{form_link}}`, or `{{extra.ColumnName}}` for any other imported column. Attach a fillable PDF to the email template.
 3. **Gravity Forms** — register your form connection (one-time, see above).
 4. **Settings** — enter your SMTP details and send a test.
 5. **New Mailing** — filter your contacts, pick templates and the Gravity Forms connection, create the mailing.

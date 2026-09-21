@@ -56,6 +56,14 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
 }
 
+// Lets a dev/test run point at a throwaway data directory instead of the
+// real one (%APPDATA%\formtracker by default) -- set FORMTRACKER_DATA_DIR
+// before launching to avoid ever reading, seeding, or deleting a real
+// installation's contacts/templates/mailings while exercising the app.
+if (process.env.FORMTRACKER_DATA_DIR) {
+  app.setPath("userData", process.env.FORMTRACKER_DATA_DIR);
+}
+
 app.whenReady().then(() => {
   store.init(app.getPath("userData"));
   createWindow();
@@ -94,8 +102,8 @@ ipcMain.handle("import:preview", async (event, filePath) => {
 ipcMain.handle("import:commit", async (event, filePath, mapping, batchName) => {
   const { rows } = csvImport.parseFile(filePath);
   const contacts = csvImport.buildContacts(rows, mapping, batchName || path.basename(filePath));
-  const inserted = store.insertMany("contacts", contacts);
-  return { count: inserted.length };
+  const { inserted, updated } = store.upsertMany("contacts", "externalId", contacts);
+  return { count: contacts.length, inserted, updated };
 });
 
 // ---------------------------------------------------------------------------
@@ -272,6 +280,15 @@ ipcMain.handle("mailings:get", async (event, id) => {
   const mailing = store.get("mailings", id);
   if (!mailing) return null;
   return { ...mailing, recipients: hydrateRecipients(id) };
+});
+
+ipcMain.handle("mailings:delete", async (event, id) => {
+  const mailing = store.get("mailings", id);
+  if (!mailing) return false;
+  if (mailing.status === "sent") throw new Error("This mailing has already been sent and can't be deleted.");
+  store.removeWhere("mailingRecipients", (r) => r.mailingId === id);
+  store.remove("mailings", id);
+  return true;
 });
 
 ipcMain.handle("mailings:send", async (event, mailingId) => {

@@ -176,4 +176,10 @@ tr:hover td { background: #fafbfd; }
 .toast-item.toast-error { background: var(--danger); }
 
 .hint { color: var(--muted); font-size: 12px; margin-top: 4px; }
+
+.contact-row { cursor: pointer; }
+.contact-detail-row td { background: #fafbfd; }
+.detail-table { width: auto; }
+.detail-table th { width: 1%; white-space: nowrap; padding-right: 24px; color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: .03em; }
+
 .section-divider { border: none; border-top: 1px solid var(--border); margin: 20px 0; }

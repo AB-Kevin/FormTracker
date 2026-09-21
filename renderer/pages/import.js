@@ -2,6 +2,7 @@
 
 const CORE_FIELD_OPTIONS = [
   { value: "", label: "Keep as extra field" },
+  { value: "externalId", label: "ID" },
   { value: "name", label: "Name" },
   { value: "email", label: "Email" },
   { value: "addressLine1", label: "Address Line 1" },
@@ -13,6 +14,7 @@ const CORE_FIELD_OPTIONS = [
 
 function guessMapping(header) {
   const h = header.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (["id", "memberid", "recordid", "contactid"].includes(h)) return "externalId";
   if (["name", "fullname", "contactname"].includes(h)) return "name";
   if (h.includes("email")) return "email";
   if (h === "address" || h === "address1" || h === "street") return "addressLine1";
@@ -85,6 +87,7 @@ window.Pages.import = {
             </tbody>
           </table>
           <p class="hint">Rows without a value mapped to Email will be treated as paper mailings.</p>
+          <p class="hint">Rows whose ID matches an existing contact update that contact in place instead of adding a duplicate.</p>
           <button class="btn" id="commit-import-btn" style="margin-top:12px">Import ${preview.totalRows} rows</button>
         </div>
       `;
@@ -100,7 +103,11 @@ window.Pages.import = {
         try {
           const batchName = qs("#batch-name", area).value || defaultBatchName;
           const result = await window.api.commitImport(filePath, mapping, batchName);
-          toast(`Imported ${result.count} contacts.`);
+          toast(
+            result.updated
+              ? `Imported ${result.count} contacts (${result.inserted} new, ${result.updated} updated).`
+              : `Imported ${result.count} contacts.`
+          );
           navigate("contacts");
         } catch (err) {
           toast(`Import failed: ${err.message}`, true);

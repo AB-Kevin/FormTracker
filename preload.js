@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld("api", {
   listMailings: () => ipcRenderer.invoke("mailings:list"),
   createMailing: (data) => ipcRenderer.invoke("mailings:create", data),
   getMailing: (id) => ipcRenderer.invoke("mailings:get", id),
+  deleteMailing: (id) => ipcRenderer.invoke("mailings:delete", id),
   sendMailing: (id) => ipcRenderer.invoke("mailings:send", id),
 
   listTracking: (mailingId) => ipcRenderer.invoke("tracking:list", mailingId),

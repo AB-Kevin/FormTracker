@@ -8,7 +8,7 @@ window.Pages.templates = {
 
     container.innerHTML = `
       <h1>Templates</h1>
-      <p class="subtitle">Separate templates for emailed and mailed recipients. Use <code>{{name}}</code>, <code>{{email}}</code>, <code>{{addressLine1}}</code>, <code>{{form_link}}</code>, or <code>{{extra.ColumnName}}</code> for any other imported column.</p>
+      <p class="subtitle">Separate templates for emailed and mailed recipients. Use <code>{{externalId}}</code>, <code>{{name}}</code>, <code>{{email}}</code>, <code>{{addressLine1}}</code>, <code>{{form_link}}</code>, or <code>{{extra.ColumnName}}</code> for any other imported column.</p>
 
       <div class="panel">
         <h2 style="margin-top:0" id="form-title">New template</h2>

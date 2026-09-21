@@ -44,6 +44,7 @@ window.Pages.mailings = {
             m.status === "sent" ? "Sent" : "Send"
           }</button>
             <button class="btn secondary" data-view="${m.id}">View tracking</button>
+            ${m.status === "sent" ? "" : `<button class="btn danger" data-delete="${m.id}" type="button">Delete</button>`}
           </td>
         </tr>`;
         })
@@ -73,6 +74,21 @@ window.Pages.mailings = {
         btn.addEventListener("click", () => {
           window.__trackingMailingFilter = btn.dataset.view;
           navigate("tracking");
+        })
+      );
+      qsa("[data-delete]", body).forEach((btn) =>
+        btn.addEventListener("click", async () => {
+          const mailing = mailings.find((m) => m.id === btn.dataset.delete);
+          if (!confirm(`Delete "${mailing?.name || "this mailing"}"? This can't be undone.`)) return;
+          btn.disabled = true;
+          try {
+            await window.api.deleteMailing(btn.dataset.delete);
+            toast("Mailing deleted.");
+            navigate("mailings");
+          } catch (err) {
+            toast(`Delete failed: ${err.message}`, true);
+            btn.disabled = false;
+          }
         })
       );
     }

@@ -67,6 +67,42 @@ function insertMany(name, newRows) {
   return withIds;
 }
 
+// Inserts rows that don't match an existing row's `keyField` value; for ones
+// that do, overwrites that existing row's fields in place (same internal id
+// and createdAt) instead of adding a duplicate. Used for re-importing a
+// contact list where the same external ID (e.g. GroupCode) should update the
+// existing contact -- so its mailing/tracking history stays linked -- rather
+// than creating a second contact. Rows with an empty/missing key always
+// insert, since there's nothing to match them against.
+function upsertMany(name, keyField, newRows) {
+  const rows = list(name);
+  const indexByKey = new Map();
+  rows.forEach((row, idx) => {
+    if (row[keyField]) indexByKey.set(row[keyField], idx);
+  });
+
+  let inserted = 0;
+  let updated = 0;
+  const now = new Date().toISOString();
+
+  for (const row of newRows) {
+    const key = row[keyField];
+    const idx = key ? indexByKey.get(key) : undefined;
+    if (idx !== undefined) {
+      rows[idx] = { ...rows[idx], ...row, id: rows[idx].id, createdAt: rows[idx].createdAt };
+      updated++;
+    } else {
+      const withId = { id: randomUUID(), createdAt: now, ...row };
+      rows.push(withId);
+      if (key) indexByKey.set(key, rows.length - 1);
+      inserted++;
+    }
+  }
+
+  saveCollection(name, rows);
+  return { inserted, updated };
+}
+
 function update(name, id, patch) {
   const rows = list(name);
   const idx = rows.findIndex((row) => row.id === id);
@@ -81,6 +117,13 @@ function remove(name, id) {
   const next = rows.filter((row) => row.id !== id);
   saveCollection(name, next);
   return next.length !== rows.length;
+}
+
+function removeWhere(name, predicate) {
+  const rows = list(name);
+  const next = rows.filter((row) => !predicate(row));
+  saveCollection(name, next);
+  return rows.length - next.length;
 }
 
 function getSettings() {
@@ -101,8 +144,10 @@ module.exports = {
   get,
   insert,
   insertMany,
+  upsertMany,
   update,
   remove,
+  removeWhere,
   getSettings,
   updateSettings,
 };
