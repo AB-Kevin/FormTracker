@@ -1,6 +1,6 @@
 {
   "name": "formtracker",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "FormTracker - import a mailing list, send email/paper form requests, and track who has responded",
   "main": "main.js",
   "author": "",
