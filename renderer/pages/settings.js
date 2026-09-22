@@ -49,6 +49,13 @@ window.Pages.settings = {
             <input type="email" id="from-email" value="${escapeHtml(settings.fromEmail)}" placeholder="defaults to SMTP username" />
           </div>
         </div>
+        <div class="row">
+          <div class="field" style="flex:1">
+            <label>Test email address</label>
+            <input type="email" id="test-email" value="${escapeHtml(settings.testEmail)}" placeholder="you@example.com" />
+            <p class="hint">Where the "Test" button on a mailing sends its sample email.</p>
+          </div>
+        </div>
         <div class="row" style="margin-top:8px">
           <button class="btn" id="save-smtp-btn">Save</button>
           <button class="btn secondary" id="test-smtp-btn">Test connection</button>
@@ -83,6 +90,7 @@ window.Pages.settings = {
         smtpPassword: qs("#smtp-password", container).value,
         fromName: qs("#from-name", container).value.trim(),
         fromEmail: qs("#from-email", container).value.trim(),
+        testEmail: qs("#test-email", container).value.trim(),
       });
       toast("SMTP settings saved.");
     });

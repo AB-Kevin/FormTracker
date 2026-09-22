@@ -8,7 +8,7 @@ const { randomUUID } = require("crypto");
 const store = require("./db/store");
 const csvImport = require("./lib/csvImport");
 const { filterContacts, listFilterableFields } = require("./lib/filter");
-const { renderTemplate, buildResponseLink } = require("./lib/merge");
+const { renderTemplate, buildResponseLink, htmlToPlainText } = require("./lib/merge");
 const { fillPdf } = require("./lib/pdfFill");
 const { generatePaperLetter } = require("./lib/paperMerge");
 const mailer = require("./lib/mailer");
@@ -48,6 +48,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 860,
+    icon: path.join(__dirname, "build", "icon.png"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -196,6 +197,7 @@ ipcMain.handle("settings:get", async () => {
     fromName: settings.fromName || "",
     fromEmail: settings.fromEmail || "",
     hasSmtpPassword: !!settings.smtpPassword,
+    testEmail: settings.testEmail || "",
   };
 });
 
@@ -207,6 +209,7 @@ ipcMain.handle("settings:save-smtp", async (event, data) => {
     smtpUser: data.smtpUser,
     fromName: data.fromName,
     fromEmail: data.fromEmail,
+    testEmail: data.testEmail,
   };
   if (data.smtpPassword) patch.smtpPassword = encryptSecret(data.smtpPassword);
   store.updateSettings(patch);
@@ -314,14 +317,20 @@ ipcMain.handle("mailings:send", async (event, mailingId) => {
       if (recipient.channel === "email") {
         if (!emailTemplate) throw new Error("No email template selected for this mailing.");
         const subject = renderTemplate(emailTemplate.subject, contact, extraContext);
-        const body = renderTemplate(emailTemplate.body, contact, extraContext);
+        const bodyHtml = renderTemplate(emailTemplate.body, contact, extraContext);
         const attachments = [];
         if (emailTemplate.pdfPath) {
           const templateBytes = fs.readFileSync(emailTemplate.pdfPath);
           const filled = await fillPdf(templateBytes, contact, recipient.responseToken);
           attachments.push({ filename: `form-${recipient.responseToken}.pdf`, content: Buffer.from(filled) });
         }
-        await mailer.sendMail(smtpConfig, { to: contact.email, subject, text: body, attachments });
+        await mailer.sendMail(smtpConfig, {
+          to: contact.email,
+          subject,
+          html: bodyHtml,
+          text: htmlToPlainText(bodyHtml),
+          attachments,
+        });
         store.update("mailingRecipients", recipient.id, { status: "sent", sentAt: new Date().toISOString() });
         results.sent++;
       } else {
@@ -345,6 +354,60 @@ ipcMain.handle("mailings:send", async (event, mailingId) => {
 
   store.update("mailings", mailingId, { status: "sent" });
   return results;
+});
+
+// Sends one copy of a mailing's email template to the address configured in
+// Settings, without touching any recipient or the mailing's status -- lets
+// Kevin see exactly what a real send will look like before committing to it.
+// Renders against a real recipient's data when the mailing has one (so merge
+// fields show something realistic) but always delivers to the test address,
+// never the recipient's own.
+ipcMain.handle("mailings:send-test", async (event, mailingId) => {
+  const mailing = store.get("mailings", mailingId);
+  if (!mailing) throw new Error("Mailing not found.");
+  const testEmail = store.getSettings().testEmail;
+  if (!testEmail) throw new Error("Set a test email address in Settings first.");
+  const emailTemplate = mailing.templateId ? store.get("templates", mailing.templateId) : null;
+  if (!emailTemplate) throw new Error("This mailing has no email template selected.");
+  const gravityForm = mailing.gravityFormId ? store.get("gravityForms", mailing.gravityFormId) : null;
+  const smtpConfig = resolveSmtpConfig();
+
+  const emailRecipients = store.list("mailingRecipients").filter((r) => r.mailingId === mailingId && r.channel === "email");
+  const contactById = new Map(store.list("contacts").map((c) => [c.id, c]));
+  const sampleRecipient = emailRecipients[0];
+  const sampleContact = sampleRecipient ? contactById.get(sampleRecipient.contactId) : null;
+  const contact = sampleContact || {
+    externalId: "TEST-1",
+    name: "Test Recipient",
+    email: testEmail,
+    addressLine1: "123 Sample St",
+    addressLine2: "",
+    city: "Sampleton",
+    state: "ST",
+    zip: "00000",
+    extra: {},
+  };
+  const token = sampleRecipient ? sampleRecipient.responseToken : generateToken();
+  const link = gravityForm ? buildResponseLink(gravityForm, token) : "";
+  const extraContext = { form_link: link };
+
+  const subject = `[TEST] ${renderTemplate(emailTemplate.subject, contact, extraContext)}`;
+  const bodyHtml = renderTemplate(emailTemplate.body, contact, extraContext);
+  const attachments = [];
+  if (emailTemplate.pdfPath) {
+    const templateBytes = fs.readFileSync(emailTemplate.pdfPath);
+    const filled = await fillPdf(templateBytes, contact, token);
+    attachments.push({ filename: `form-${token}.pdf`, content: Buffer.from(filled) });
+  }
+
+  await mailer.sendMail(smtpConfig, {
+    to: testEmail,
+    subject,
+    html: bodyHtml,
+    text: htmlToPlainText(bodyHtml),
+    attachments,
+  });
+  return { to: testEmail };
 });
 
 // ---------------------------------------------------------------------------

@@ -177,6 +177,31 @@ tr:hover td { background: #fafbfd; }
 
 .hint { color: var(--muted); font-size: 12px; margin-top: 4px; }
 
+.rte-toolbar { display: flex; gap: 4px; margin-bottom: 6px; }
+.rte-btn {
+  background: #edf0f5;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 9px;
+  font-size: 12.5px;
+  cursor: pointer;
+  color: var(--text);
+}
+.rte-btn:hover { background: #dfe3ea; }
+.rte-body {
+  min-height: 130px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13.5px;
+  background: #fff;
+  overflow-y: auto;
+}
+.rte-body:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.rte-body:empty::before { content: attr(data-placeholder); color: var(--muted); }
+.rte-body p { margin: 0 0 8px; }
+.rte-body ul, .rte-body ol { margin: 0 0 8px 20px; padding: 0; }
+
 .contact-row { cursor: pointer; }
 .contact-detail-row td { background: #fafbfd; }
 .detail-table { width: auto; }

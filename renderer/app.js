@@ -21,6 +21,22 @@ function escapeHtml(str) {
   }[c]));
 }
 
+// Shared with mailing-new.js (the filter builder) and mailings.js (showing a
+// past mailing's filters read-only), so the two stay in sync automatically.
+const FILTER_OPS = [
+  { value: "notEmpty", label: "is not empty" },
+  { value: "empty", label: "is empty" },
+  { value: "equals", label: "equals" },
+  { value: "contains", label: "contains" },
+  { value: "in", label: "is one of (comma-separated)" },
+];
+function filterOpLabel(op) {
+  return FILTER_OPS.find((o) => o.value === op)?.label || op;
+}
+function filterRuleNeedsValue(op) {
+  return op !== "empty" && op !== "notEmpty";
+}
+
 function formatDate(iso) {
   if (!iso) return "";
   const d = new Date(iso);
@@ -62,3 +78,6 @@ window.navigate = navigate;
 window.toast = toast;
 window.escapeHtml = escapeHtml;
 window.formatDate = formatDate;
+window.FILTER_OPS = FILTER_OPS;
+window.filterOpLabel = filterOpLabel;
+window.filterRuleNeedsValue = filterRuleNeedsValue;

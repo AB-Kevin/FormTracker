@@ -1,13 +1,5 @@
 "use strict";
 
-const FILTER_OPS = [
-  { value: "notEmpty", label: "is not empty" },
-  { value: "empty", label: "is empty" },
-  { value: "equals", label: "equals" },
-  { value: "contains", label: "contains" },
-  { value: "in", label: "is one of (comma-separated)" },
-];
-
 window.Pages["mailing-new"] = {
   async render(container) {
     const [fields, templates, gfConnections] = await Promise.all([

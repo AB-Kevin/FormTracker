@@ -26,6 +26,28 @@ window.Pages.mailings = {
       };
     }
 
+    function filtersHtml(mailing) {
+      const rules = mailing.filterRules || [];
+      if (rules.length === 0) {
+        return `<p class="hint" style="margin:8px 4px">This mailing includes every contact — no filters were applied.</p>`;
+      }
+      return `
+        <div style="padding:8px 4px">
+          <p class="hint" style="margin:0 0 6px">Recipients were selected by:</p>
+          <ul style="margin:0;padding-left:20px">
+            ${rules
+              .map(
+                (r) =>
+                  `<li>${escapeHtml(r.field)} <strong>${escapeHtml(filterOpLabel(r.op))}</strong>${
+                    filterRuleNeedsValue(r.op) ? ` "${escapeHtml(r.value || "")}"` : ""
+                  }</li>`
+              )
+              .join("")}
+          </ul>
+        </div>
+      `;
+    }
+
     function renderRows() {
       const body = qs("#mailing-rows", container);
       qs("#mailing-empty", container).style.display = mailings.length ? "none" : "block";
@@ -43,10 +65,13 @@ window.Pages.mailings = {
             <button class="btn" data-send="${m.id}" ${m.status === "sent" ? "disabled" : ""}>${
             m.status === "sent" ? "Sent" : "Send"
           }</button>
+            <button class="btn secondary" data-test="${m.id}" type="button">Test</button>
             <button class="btn secondary" data-view="${m.id}">View tracking</button>
+            <button class="btn secondary" data-filters="${m.id}" type="button">Filters</button>
             ${m.status === "sent" ? "" : `<button class="btn danger" data-delete="${m.id}" type="button">Delete</button>`}
           </td>
-        </tr>`;
+        </tr>
+        <tr class="filters-row" id="filters-row-${m.id}" style="display:none"><td colspan="6"></td></tr>`;
         })
         .join("");
 
@@ -70,10 +95,33 @@ window.Pages.mailings = {
           }
         })
       );
+      qsa("[data-test]", body).forEach((btn) =>
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          btn.textContent = "Sending…";
+          try {
+            const result = await window.api.sendTestMailing(btn.dataset.test);
+            toast(`Test email sent to ${result.to}.`);
+          } catch (err) {
+            toast(`Test send failed: ${err.message}`, true);
+          }
+          btn.disabled = false;
+          btn.textContent = "Test";
+        })
+      );
       qsa("[data-view]", body).forEach((btn) =>
         btn.addEventListener("click", () => {
           window.__trackingMailingFilter = btn.dataset.view;
           navigate("tracking");
+        })
+      );
+      qsa("[data-filters]", body).forEach((btn) =>
+        btn.addEventListener("click", () => {
+          const mailing = mailings.find((m) => m.id === btn.dataset.filters);
+          const row = qs(`#filters-row-${mailing.id}`, container);
+          const isOpen = row.style.display !== "none";
+          row.style.display = isOpen ? "none" : "table-row";
+          if (!isOpen) row.querySelector("td").innerHTML = filtersHtml(mailing);
         })
       );
       qsa("[data-delete]", body).forEach((btn) =>

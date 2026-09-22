@@ -1,5 +1,16 @@
 "use strict";
 
+function looksLikeHtml(str) {
+  return /<[a-z][\s\S]*>/i.test(str || "");
+}
+
+// Legacy templates (created before rich text) have a plain-text body --
+// preserve their line breaks when they're first loaded into the HTML editor
+// instead of collapsing them onto one line.
+function plainTextToHtml(str) {
+  return escapeHtml(str || "").replace(/\n/g, "<br>");
+}
+
 window.Pages.templates = {
   async render(container) {
     let templates = await window.api.listTemplates();
@@ -8,7 +19,7 @@ window.Pages.templates = {
 
     container.innerHTML = `
       <h1>Templates</h1>
-      <p class="subtitle">Separate templates for emailed and mailed recipients. Use <code>{{externalId}}</code>, <code>{{name}}</code>, <code>{{email}}</code>, <code>{{addressLine1}}</code>, <code>{{form_link}}</code>, or <code>{{extra.ColumnName}}</code> for any other imported column.</p>
+      <p class="subtitle">Separate templates for emailed and mailed recipients — email bodies support rich text, paper letters stay plain text. Use <code>{{externalId}}</code>, <code>{{name}}</code>, <code>{{email}}</code>, <code>{{addressLine1}}</code>, <code>{{form_link}}</code>, or <code>{{extra.ColumnName}}</code> for any other imported column.</p>
 
       <div class="panel">
         <h2 style="margin-top:0" id="form-title">New template</h2>
@@ -29,9 +40,32 @@ window.Pages.templates = {
           <label>Subject</label>
           <input type="text" id="tpl-subject" placeholder="e.g. Please complete your {{extra.Committee}} form" />
         </div>
-        <div class="field">
+        <div class="field" id="body-plain-field">
           <label>Body</label>
-          <textarea id="tpl-body" placeholder="Dear {{name}},&#10;&#10;Please fill out your form here: {{form_link}}&#10;A fillable PDF is attached as well."></textarea>
+          <textarea id="tpl-body-plain" placeholder="Dear {{name}},&#10;&#10;Please fill out your form here: {{form_link}}&#10;A fillable PDF is attached as well."></textarea>
+        </div>
+        <div class="field" id="body-rich-field">
+          <label>Body</label>
+          <div class="rte-toolbar">
+            <button type="button" class="rte-btn" data-cmd="bold" title="Bold"><b>B</b></button>
+            <button type="button" class="rte-btn" data-cmd="italic" title="Italic"><i>I</i></button>
+            <button type="button" class="rte-btn" data-cmd="underline" title="Underline"><u>U</u></button>
+            <button type="button" class="rte-btn" data-cmd="insertUnorderedList" title="Bullet list">• List</button>
+            <button type="button" class="rte-btn" data-cmd="insertOrderedList" title="Numbered list">1. List</button>
+            <button type="button" class="rte-btn" data-cmd="link" title="Insert link">Link</button>
+            <button type="button" class="rte-btn" data-cmd="removeFormat" title="Clear formatting">Clear</button>
+          </div>
+          <div class="row" id="link-input-row" style="display:none;margin-bottom:6px">
+            <input type="text" id="link-url-input" placeholder="https://example.org" style="flex:1" />
+            <button type="button" class="btn secondary" id="link-insert-btn">Insert</button>
+            <button type="button" class="btn secondary" id="link-cancel-btn">Cancel</button>
+          </div>
+          <div
+            id="tpl-body-rich"
+            class="rte-body"
+            contenteditable="true"
+            data-placeholder="Dear {{name}}, Please fill out your form here: {{form_link}} A fillable PDF is attached as well."
+          ></div>
         </div>
         <div class="field" id="pdf-field">
           <label>Fillable PDF attachment</label>
@@ -60,9 +94,55 @@ window.Pages.templates = {
       const type = qs("#tpl-type", container).value;
       qs("#subject-field", container).style.display = type === "email" ? "flex" : "none";
       qs("#pdf-field", container).style.display = type === "email" ? "flex" : "none";
+      qs("#body-rich-field", container).style.display = type === "email" ? "block" : "none";
+      qs("#body-plain-field", container).style.display = type === "email" ? "none" : "flex";
     }
     qs("#tpl-type", container).addEventListener("change", toggleTypeFields);
     toggleTypeFields();
+
+    // Electron's BrowserWindow doesn't implement window.prompt() (only
+    // alert()/confirm() are supported) -- it silently does nothing -- so the
+    // link URL needs its own inline input instead, following the same
+    // expandable-row pattern the Tracking page uses for "Mark received".
+    let savedLinkRange = null;
+
+    qsa(".rte-btn", container).forEach((btn) => {
+      btn.addEventListener("click", () => {
+        qs("#tpl-body-rich", container).focus();
+        if (btn.dataset.cmd === "link") {
+          const sel = window.getSelection();
+          savedLinkRange = sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null;
+          qs("#link-input-row", container).style.display = "flex";
+          qs("#link-url-input", container).value = "";
+          qs("#link-url-input", container).focus();
+        } else {
+          document.execCommand(btn.dataset.cmd, false, null);
+        }
+      });
+    });
+
+    function insertLink() {
+      const url = qs("#link-url-input", container).value.trim();
+      const sel = window.getSelection();
+      if (url && savedLinkRange) {
+        sel.removeAllRanges();
+        sel.addRange(savedLinkRange);
+        document.execCommand("createLink", false, url);
+      }
+      qs("#link-input-row", container).style.display = "none";
+      savedLinkRange = null;
+    }
+    qs("#link-insert-btn", container).addEventListener("click", insertLink);
+    qs("#link-url-input", container).addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        insertLink();
+      }
+    });
+    qs("#link-cancel-btn", container).addEventListener("click", () => {
+      qs("#link-input-row", container).style.display = "none";
+      savedLinkRange = null;
+    });
 
     qs("#pick-pdf-btn", container).addEventListener("click", async () => {
       const result = await window.api.pickPdfTemplate();
@@ -78,9 +158,12 @@ window.Pages.templates = {
       qs("#tpl-type", container).value = "email";
       qs("#tpl-name", container).value = "";
       qs("#tpl-subject", container).value = "";
-      qs("#tpl-body", container).value = "";
+      qs("#tpl-body-plain", container).value = "";
+      qs("#tpl-body-rich", container).innerHTML = "";
       qs("#pdf-name", container).textContent = "";
       qs("#cancel-edit-btn", container).style.display = "none";
+      qs("#link-input-row", container).style.display = "none";
+      savedLinkRange = null;
       toggleTypeFields();
     }
 
@@ -113,7 +196,13 @@ window.Pages.templates = {
           qs("#tpl-type", container).value = tpl.type;
           qs("#tpl-name", container).value = tpl.name;
           qs("#tpl-subject", container).value = tpl.subject || "";
-          qs("#tpl-body", container).value = tpl.body || "";
+          if (tpl.type === "email") {
+            qs("#tpl-body-rich", container).innerHTML = looksLikeHtml(tpl.body) ? tpl.body || "" : plainTextToHtml(tpl.body);
+            qs("#tpl-body-plain", container).value = "";
+          } else {
+            qs("#tpl-body-plain", container).value = tpl.body || "";
+            qs("#tpl-body-rich", container).innerHTML = "";
+          }
           qs("#pdf-name", container).textContent = pickedPdf ? pickedPdf.originalName : "";
           qs("#cancel-edit-btn", container).style.display = "inline-block";
           toggleTypeFields();
@@ -133,13 +222,16 @@ window.Pages.templates = {
 
     qs("#save-tpl-btn", container).addEventListener("click", async () => {
       const name = qs("#tpl-name", container).value.trim();
-      const body = qs("#tpl-body", container).value.trim();
-      if (!name || !body) {
+      const type = qs("#tpl-type", container).value;
+      const richEl = qs("#tpl-body-rich", container);
+      const body = type === "email" ? richEl.innerHTML.trim() : qs("#tpl-body-plain", container).value.trim();
+      const bodyIsEmpty = type === "email" ? richEl.textContent.trim() === "" : body === "";
+      if (!name || bodyIsEmpty) {
         toast("Name and body are required.", true);
         return;
       }
       const data = {
-        type: qs("#tpl-type", container).value,
+        type,
         name,
         subject: qs("#tpl-subject", container).value.trim(),
         body,
