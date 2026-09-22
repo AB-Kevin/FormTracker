@@ -74,10 +74,7 @@ window.Pages.settings = {
       <div class="panel">
         <h2 style="margin-top:0">Updates</h2>
         <p class="hint">You're running version ${escapeHtml(version)}.</p>
-        <div class="row">
-          <button class="btn secondary" id="check-update-btn" type="button">Check for updates</button>
-          <span id="update-status" class="hint"></span>
-        </div>
+        <div id="update-action-area"></div>
       </div>
     `;
 
@@ -111,34 +108,46 @@ window.Pages.settings = {
 
     qs("#open-data-dir-btn", container).addEventListener("click", () => window.api.openPath(dataDir));
 
-    qs("#check-update-btn", container).addEventListener("click", async () => {
-      const btn = qs("#check-update-btn", container);
-      const status = qs("#update-status", container);
-      btn.disabled = true;
-      btn.textContent = "Checking…";
-      status.textContent = "";
-      try {
-        const result = await window.api.checkForUpdate();
-        if (result.hasUpdate) {
-          status.innerHTML = `Update available: <strong>${escapeHtml(result.latestVersion)}</strong> — `;
-          const link = document.createElement("a");
-          link.href = "#";
-          link.textContent = "download the latest release";
-          link.addEventListener("click", (e) => {
-            e.preventDefault();
-            window.api.openExternal(result.url);
-          });
-          status.appendChild(link);
-        } else if (result.latestVersion) {
-          status.textContent = `You're up to date (latest release is ${result.latestVersion}).`;
-        } else {
-          status.textContent = "No releases have been published yet.";
-        }
-      } catch (err) {
-        status.textContent = `Couldn't check for updates: ${err.message}`;
+    // main.js owns autoUpdater and only reports status over "update:status" --
+    // this just mirrors that status into the panel. window.__updateStatus
+    // (set in boot.js) carries over whatever the most recent check found, so
+    // opening Settings after the automatic startup check already shows its
+    // result instead of starting blank every time.
+    const actionArea = qs("#update-action-area", container);
+
+    function renderUpdateAction(status) {
+      let html;
+      if (status.state === "checking") {
+        html = `<span class="hint">Checking for updates…</span>`;
+      } else if (status.state === "available") {
+        html = `<button class="btn" id="update-download-btn" type="button">Download update ${escapeHtml(status.version)}</button>`;
+      } else if (status.state === "downloading") {
+        html = `<span class="hint">Downloading update… ${status.percent ?? 0}%</span>`;
+      } else if (status.state === "downloaded") {
+        html = `<button class="btn" id="update-restart-btn" type="button">Restart to install ${escapeHtml(status.version)}</button>`;
+      } else if (status.state === "not-available") {
+        html = `<span class="hint">You're up to date.</span> <button class="btn secondary" id="update-check-btn" type="button">Check again</button>`;
+      } else if (status.state === "error") {
+        html = `<span class="hint" style="color:var(--danger)">Update check failed: ${escapeHtml(status.message || "")}</span> <button class="btn secondary" id="update-check-btn" type="button">Try again</button>`;
+      } else {
+        html = `<button class="btn secondary" id="update-check-btn" type="button">Check for updates</button>`;
       }
-      btn.disabled = false;
-      btn.textContent = "Check for updates";
+      actionArea.innerHTML = html;
+      qs("#update-check-btn", actionArea)?.addEventListener("click", () => window.api.checkForUpdates());
+      qs("#update-download-btn", actionArea)?.addEventListener("click", () => window.api.downloadUpdate());
+      qs("#update-restart-btn", actionArea)?.addEventListener("click", () => window.api.quitAndInstall());
+    }
+
+    renderUpdateAction(window.__updateStatus || { state: "idle" });
+    const unsubscribeUpdateStatus = window.api.onUpdateStatus((status) => {
+      // The page's own root DOM gets replaced wholesale on every navigate()
+      // (there's no per-page unmount hook in this app), so once actionArea is
+      // no longer attached, this render has been left behind -- stop reacting.
+      if (!document.body.contains(actionArea)) {
+        unsubscribeUpdateStatus();
+        return;
+      }
+      renderUpdateAction(status);
     });
   },
 };

@@ -7,7 +7,8 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win"
+    "dist": "electron-builder --win",
+    "release": "electron-builder --win --publish always"
   },
   "devDependencies": {
     "electron": "^43.4.1",
@@ -32,9 +33,16 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "AB-Kevin",
+      "repo": "FormTracker",
+      "releaseType": "release"
     }
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "nodemailer": "^6.9.16",
     "papaparse": "^5.4.1",
     "pdf-lib": "^1.17.1",

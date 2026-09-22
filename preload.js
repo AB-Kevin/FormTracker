@@ -50,5 +50,13 @@ contextBridge.exposeInMainWorld("api", {
   openExternal: (url) => ipcRenderer.invoke("shell:open-external", url),
   getDataDir: () => ipcRenderer.invoke("app:get-data-dir"),
   getVersion: () => ipcRenderer.invoke("app:get-version"),
-  checkForUpdate: () => ipcRenderer.invoke("app:check-for-update"),
+
+  checkForUpdates: () => ipcRenderer.invoke("update:check"),
+  downloadUpdate: () => ipcRenderer.invoke("update:download"),
+  quitAndInstall: () => ipcRenderer.invoke("update:install"),
+  onUpdateStatus: (callback) => {
+    const listener = (event, status) => callback(status);
+    ipcRenderer.on("update:status", listener);
+    return () => ipcRenderer.removeListener("update:status", listener);
+  },
 });

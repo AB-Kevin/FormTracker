@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # Keep GitHub Actions (actions/checkout, actions/setup-node, etc.) current.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # Keep npm dependencies (electron, electron-builder, ...) current.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"

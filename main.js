@@ -1,6 +1,7 @@
 "use strict";
 
 const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage } = require("electron");
+const { autoUpdater } = require("electron-updater");
 const path = require("path");
 const fs = require("fs");
 const { randomUUID } = require("crypto");
@@ -14,7 +15,6 @@ const { generatePaperLetter } = require("./lib/paperMerge");
 const mailer = require("./lib/mailer");
 const gravityForms = require("./lib/gravityForms");
 const { generateToken } = require("./lib/tokens");
-const { checkForUpdate } = require("./lib/updateCheck");
 
 const SYNC_INTERVAL_MS = 5 * 60 * 1000;
 let mainWindow = null;
@@ -573,4 +573,52 @@ ipcMain.handle("shell:open-external", async (event, url) => {
 });
 ipcMain.handle("app:get-data-dir", async () => store.getDataDir());
 ipcMain.handle("app:get-version", async () => app.getVersion());
-ipcMain.handle("app:check-for-update", async () => checkForUpdate(app.getVersion()));
+
+// ---------------------------------------------------------------------------
+// Auto-update
+// ---------------------------------------------------------------------------
+// Driven entirely by the renderer's Settings page "Check for updates" button
+// (and one automatic check at launch, see boot.js) -- never checks or
+// downloads silently on its own beyond that, so nothing happens on the
+// user's bandwidth/disk without a check having been triggered first.
+
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = false;
+// Lets "Check for updates" actually hit GitHub when running unpacked (npm
+// start), reading dev-app-update.yml instead of silently no-op'ing. Has no
+// effect on a packaged build -- those always use the real app-update.yml
+// electron-builder generates, regardless of this flag.
+autoUpdater.forceDevUpdateConfig = true;
+
+function sendUpdateStatus(status) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("update:status", status);
+  }
+}
+
+autoUpdater.on("checking-for-update", () => sendUpdateStatus({ state: "checking" }));
+autoUpdater.on("update-available", (info) => sendUpdateStatus({ state: "available", version: info.version }));
+autoUpdater.on("update-not-available", () => sendUpdateStatus({ state: "not-available" }));
+autoUpdater.on("download-progress", (progress) =>
+  sendUpdateStatus({ state: "downloading", percent: Math.round(progress.percent) })
+);
+autoUpdater.on("update-downloaded", (info) => sendUpdateStatus({ state: "downloaded", version: info.version }));
+autoUpdater.on("error", (err) => sendUpdateStatus({ state: "error", message: err?.message || String(err) }));
+
+ipcMain.handle("update:check", async () => {
+  try {
+    await autoUpdater.checkForUpdates();
+  } catch (err) {
+    sendUpdateStatus({ state: "error", message: err?.message || String(err) });
+  }
+});
+
+ipcMain.handle("update:download", async () => {
+  try {
+    await autoUpdater.downloadUpdate();
+  } catch (err) {
+    sendUpdateStatus({ state: "error", message: err?.message || String(err) });
+  }
+});
+
+ipcMain.handle("update:install", () => autoUpdater.quitAndInstall());

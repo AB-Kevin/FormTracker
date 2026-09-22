@@ -16,5 +16,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   });
 
+  // Kept in a shared spot (not just local to the Settings page) so a check
+  // already run before the user opens Settings shows its result immediately
+  // instead of Settings always starting from a blank "Check for updates".
+  window.__updateStatus = { state: "idle" };
+  window.api.onUpdateStatus((status) => {
+    window.__updateStatus = status;
+  });
+  window.api.checkForUpdates(); // not awaited -- a startup check shouldn't hold up opening the app
+
   navigate("import");
 });
