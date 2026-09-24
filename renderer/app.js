@@ -57,6 +57,12 @@ function toast(message, isError = false) {
   }, 4000);
 }
 
+// Always use this instead of window.confirm() -- see "dialog:confirm" in
+// main.js for why the built-in one breaks form controls afterwards.
+function confirmAction(message, okLabel) {
+  return window.api.confirm(message, okLabel);
+}
+
 async function navigate(pageName) {
   qsa(".nav-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.page === pageName));
   const content = qs("#content");
@@ -76,6 +82,7 @@ async function navigate(pageName) {
 
 window.navigate = navigate;
 window.toast = toast;
+window.confirmAction = confirmAction;
 window.escapeHtml = escapeHtml;
 window.formatDate = formatDate;
 window.FILTER_OPS = FILTER_OPS;

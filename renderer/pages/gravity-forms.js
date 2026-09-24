@@ -158,7 +158,7 @@ window.Pages["gravity-forms"] = {
       );
       qsa("[data-delete]", body).forEach((btn) =>
         btn.addEventListener("click", async () => {
-          if (!confirm("Delete this connection?")) return;
+          if (!(await confirmAction("Delete this connection?", "Delete"))) return;
           await window.api.deleteGravityForm(btn.dataset.delete);
           connections = await window.api.listGravityForms();
           renderList();

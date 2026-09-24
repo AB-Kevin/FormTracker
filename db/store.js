@@ -112,6 +112,21 @@ function update(name, id, patch) {
   return rows[idx];
 }
 
+// Applies patchFn(row) to every row in one load/save; rows for which it
+// returns a falsy value are left untouched. Returns how many rows changed.
+function updateWhere(name, patchFn) {
+  const rows = list(name);
+  let changed = 0;
+  const next = rows.map((row) => {
+    const patch = patchFn(row);
+    if (!patch) return row;
+    changed++;
+    return { ...row, ...patch, id: row.id };
+  });
+  if (changed) saveCollection(name, next);
+  return changed;
+}
+
 function remove(name, id) {
   const rows = list(name);
   const next = rows.filter((row) => row.id !== id);
@@ -146,6 +161,7 @@ module.exports = {
   insertMany,
   upsertMany,
   update,
+  updateWhere,
   remove,
   removeWhere,
   getSettings,

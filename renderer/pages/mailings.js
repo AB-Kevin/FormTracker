@@ -77,7 +77,7 @@ window.Pages.mailings = {
 
       qsa("[data-send]", body).forEach((btn) =>
         btn.addEventListener("click", async () => {
-          if (!confirm("Send this mailing now? Emails will go out and paper letters will be generated.")) return;
+          if (!(await confirmAction("Send this mailing now? Emails will go out and paper letters will be generated.", "Send"))) return;
           btn.disabled = true;
           btn.textContent = "Sending…";
           try {
@@ -127,7 +127,7 @@ window.Pages.mailings = {
       qsa("[data-delete]", body).forEach((btn) =>
         btn.addEventListener("click", async () => {
           const mailing = mailings.find((m) => m.id === btn.dataset.delete);
-          if (!confirm(`Delete "${mailing?.name || "this mailing"}"? This can't be undone.`)) return;
+          if (!(await confirmAction(`Delete "${mailing?.name || "this mailing"}"? This can't be undone.`, "Delete"))) return;
           btn.disabled = true;
           try {
             await window.api.deleteMailing(btn.dataset.delete);

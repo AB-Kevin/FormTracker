@@ -36,8 +36,11 @@ contextBridge.exposeInMainWorld("api", {
   listTracking: (mailingId) => ipcRenderer.invoke("tracking:list", mailingId),
   pickAttachment: () => ipcRenderer.invoke("tracking:pick-attachment"),
   markReceived: (recipientId, data) => ipcRenderer.invoke("tracking:mark-received", recipientId, data),
-  exportTracking: (mailingId, format) => ipcRenderer.invoke("tracking:export", mailingId, format),
-  exportPaperAddresses: (mailingId) => ipcRenderer.invoke("tracking:export-paper-addresses", mailingId),
+  markMailed: (recipientIds) => ipcRenderer.invoke("tracking:mark-mailed", recipientIds),
+  unmarkMailed: (recipientId) => ipcRenderer.invoke("tracking:unmark-mailed", recipientId),
+  removeRecipient: (recipientId) => ipcRenderer.invoke("tracking:remove-recipient", recipientId),
+  exportTracking: (recipientIds, format) => ipcRenderer.invoke("tracking:export", recipientIds, format),
+  exportPaperAddresses: (recipientIds) => ipcRenderer.invoke("tracking:export-paper-addresses", recipientIds),
 
   runSync: () => ipcRenderer.invoke("sync:run"),
   onSyncCompleted: (callback) => {
@@ -46,6 +49,7 @@ contextBridge.exposeInMainWorld("api", {
     return () => ipcRenderer.removeListener("sync:completed", listener);
   },
 
+  confirm: (message, okLabel) => ipcRenderer.invoke("dialog:confirm", message, okLabel),
   openPath: (filePath) => ipcRenderer.invoke("shell:open-path", filePath),
   showInFolder: (filePath) => ipcRenderer.invoke("shell:show-in-folder", filePath),
   openExternal: (url) => ipcRenderer.invoke("shell:open-external", url),

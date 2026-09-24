@@ -211,7 +211,7 @@ window.Pages.templates = {
       );
       qsa("[data-delete]", body).forEach((btn) =>
         btn.addEventListener("click", async () => {
-          if (!confirm("Delete this template?")) return;
+          if (!(await confirmAction("Delete this template?", "Delete"))) return;
           await window.api.deleteTemplate(btn.dataset.delete);
           templates = await window.api.listTemplates();
           renderList();

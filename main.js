@@ -467,10 +467,62 @@ ipcMain.handle("tracking:mark-received", async (event, recipientId, { channel, n
   return response;
 });
 
-ipcMain.handle("tracking:export", async (event, mailingId, format) => {
-  const recipients = mailingId
-    ? store.list("mailingRecipients").filter((r) => r.mailingId === mailingId)
-    : store.list("mailingRecipients");
+// Paper recipients go to "sent" as soon as their letter PDF is generated, but
+// that doesn't mean it's actually in the mail yet -- mailedAt records when the
+// physical copy went out. Takes an array so the tracking page can mark a whole
+// filtered batch at once. Email and already-responded recipients are skipped.
+// A still-pending recipient (e.g. mailed from the exported address list
+// without generating letters) is moved to "sent" too, so a later send of the
+// mailing doesn't treat it as still needing to go out.
+ipcMain.handle("tracking:mark-mailed", async (event, recipientIds) => {
+  const ids = new Set(recipientIds || []);
+  const now = new Date().toISOString();
+  const updated = store.updateWhere("mailingRecipients", (recipient) => {
+    if (!ids.has(recipient.id)) return null;
+    if (recipient.channel !== "paper" || recipient.status === "responded" || recipient.mailedAt) return null;
+    const patch = { mailedAt: now };
+    if (recipient.status === "pending") {
+      patch.status = "sent";
+      patch.sentAt = recipient.sentAt || now;
+    }
+    return patch;
+  });
+  return { updated };
+});
+
+// Undoes tracking:mark-mailed. A paper recipient with no generated letter can
+// only have reached "sent" by being marked mailed, so it goes back to pending.
+ipcMain.handle("tracking:unmark-mailed", async (event, recipientId) => {
+  const recipient = store.get("mailingRecipients", recipientId);
+  if (!recipient) throw new Error("Recipient not found.");
+  const patch = { mailedAt: null };
+  if (recipient.status === "sent" && !recipient.generatedFilePath) {
+    patch.status = "pending";
+    patch.sentAt = null;
+  }
+  return store.update("mailingRecipients", recipientId, patch);
+});
+
+// Drops one person from a mailing, along with any responses recorded for
+// them. Stored attachment files are left on disk rather than deleted.
+ipcMain.handle("tracking:remove-recipient", async (event, recipientId) => {
+  const recipient = store.get("mailingRecipients", recipientId);
+  if (!recipient) throw new Error("Recipient not found.");
+  store.removeWhere("responses", (resp) => resp.mailingRecipientId === recipientId);
+  store.remove("mailingRecipients", recipientId);
+  return true;
+});
+
+// Both exports take the recipient IDs currently shown on the Tracking page, so
+// what's exported always matches the page's mailing/status/channel/search
+// filters rather than re-deriving the filter here.
+function recipientsByIds(recipientIds) {
+  const ids = new Set(recipientIds || []);
+  return store.list("mailingRecipients").filter((r) => ids.has(r.id));
+}
+
+ipcMain.handle("tracking:export", async (event, recipientIds, format) => {
+  const recipients = recipientsByIds(recipientIds);
   const contacts = new Map(store.list("contacts").map((c) => [c.id, c]));
   const responses = store.list("responses");
 
@@ -484,6 +536,7 @@ ipcMain.handle("tracking:export", async (event, mailingId, format) => {
       Channel: r.channel,
       Status: r.status,
       "Sent At": r.sentAt || "",
+      "Mailed At": r.mailedAt || "",
       "Responded Via": latest ? latest.channel : "",
       "Responded At": latest ? latest.receivedAt : "",
       Token: r.responseToken,
@@ -511,11 +564,8 @@ ipcMain.handle("tracking:export", async (event, mailingId, format) => {
   return result.filePath;
 });
 
-ipcMain.handle("tracking:export-paper-addresses", async (event, mailingId) => {
-  const recipients = (mailingId
-    ? store.list("mailingRecipients").filter((r) => r.mailingId === mailingId)
-    : store.list("mailingRecipients")
-  ).filter((r) => r.channel === "paper");
+ipcMain.handle("tracking:export-paper-addresses", async (event, recipientIds) => {
+  const recipients = recipientsByIds(recipientIds).filter((r) => r.channel === "paper");
   const contacts = new Map(store.list("contacts").map((c) => [c.id, c]));
 
   const rows = recipients.map((r) => {
@@ -597,6 +647,24 @@ ipcMain.handle("sync:run", async () => runSync());
 // ---------------------------------------------------------------------------
 // Misc
 // ---------------------------------------------------------------------------
+
+// Used instead of window.confirm(): on Windows, Electron's renderer-side
+// confirm()/alert() leaves the page unable to take mouse input on form
+// controls afterwards (dropdowns won't open, inputs won't focus) until the
+// window is blurred and refocused. A native message box owned by the main
+// process doesn't have that problem.
+ipcMain.handle("dialog:confirm", async (event, message, okLabel) => {
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: "question",
+    buttons: [okLabel || "OK", "Cancel"],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+    message,
+  });
+  if (mainWindow) mainWindow.webContents.focus();
+  return response === 0;
+});
 
 ipcMain.handle("shell:open-path", async (event, filePath) => shell.openPath(filePath));
 ipcMain.handle("shell:show-in-folder", async (event, filePath) => shell.showItemInFolder(filePath));
