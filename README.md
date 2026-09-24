@@ -17,7 +17,7 @@ A desktop tool to send form requests to a mailing list — by email or paper mai
 
 - Windows (or macOS/Linux — Electron is cross-platform, but this has been built/tested against Windows).
 - Node.js 18+ and npm.
-- An email account you can send through via SMTP (e.g. a Gmail account with an [app password](https://myaccount.google.com/apppasswords)).
+- A way to send through SMTP: either an email account (e.g. a Gmail account with an [app password](https://myaccount.google.com/apppasswords)), or an unauthenticated relay your IT team sets up (e.g. an IP-allowlisted connector on a static IP) — for the latter, leave **SMTP username/password blank in Settings** and fill in **From email**, since there's no username for it to default to.
 - A Gravity Forms form on a WordPress site you control, for recipients to fill out online (see setup below). Paper and emailed-PDF responses don't need this.
 
 ## Getting started

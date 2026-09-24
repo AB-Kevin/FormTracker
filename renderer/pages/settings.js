@@ -33,6 +33,7 @@ window.Pages.settings = {
           <div class="field" style="flex:1">
             <label>SMTP username</label>
             <input type="text" id="smtp-user" value="${escapeHtml(settings.smtpUser)}" />
+            <p class="hint">Leave blank for an unauthenticated relay (e.g. one your IT team allowlists by static IP instead of a login).</p>
           </div>
           <div class="field" style="flex:1">
             <label>SMTP password ${settings.hasSmtpPassword ? "(saved — leave blank to keep)" : ""}</label>
@@ -45,7 +46,7 @@ window.Pages.settings = {
             <input type="text" id="from-name" value="${escapeHtml(settings.fromName)}" />
           </div>
           <div class="field" style="flex:1">
-            <label>From email</label>
+            <label>From email${settings.smtpUser ? "" : " (required — no SMTP username to fall back on)"}</label>
             <input type="email" id="from-email" value="${escapeHtml(settings.fromEmail)}" placeholder="defaults to SMTP username" />
           </div>
         </div>

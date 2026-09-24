@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld("api", {
   pickAttachment: () => ipcRenderer.invoke("tracking:pick-attachment"),
   markReceived: (recipientId, data) => ipcRenderer.invoke("tracking:mark-received", recipientId, data),
   exportTracking: (mailingId, format) => ipcRenderer.invoke("tracking:export", mailingId, format),
+  exportPaperAddresses: (mailingId) => ipcRenderer.invoke("tracking:export-paper-addresses", mailingId),
 
   runSync: () => ipcRenderer.invoke("sync:run"),
   onSyncCompleted: (callback) => {

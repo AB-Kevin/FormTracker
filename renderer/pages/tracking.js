@@ -16,9 +16,11 @@ window.Pages.tracking = {
     const preselect = window.__trackingMailingFilter || "";
     window.__trackingMailingFilter = null;
     let statusFilter = "all";
+    let channelFilter = "all";
     let mailingFilter = preselect;
     let searchTerm = "";
     let rows = [];
+    let expandedId = null;
 
     container.innerHTML = `
       <h1>Tracking</h1>
@@ -43,6 +45,14 @@ window.Pages.tracking = {
               <option value="responded">Responded</option>
             </select>
           </div>
+          <div class="field">
+            <label>Channel</label>
+            <select id="channel-filter">
+              <option value="all">All</option>
+              <option value="paper">Paper</option>
+              <option value="email">Email</option>
+            </select>
+          </div>
           <div class="field" style="flex:1">
             <label>Search</label>
             <input type="text" id="search-box" placeholder="Name or email…" />
@@ -50,6 +60,7 @@ window.Pages.tracking = {
           <button class="btn secondary" id="sync-btn" type="button" style="align-self:flex-end;margin-bottom:12px">Sync Gravity Forms now</button>
           <button class="btn secondary" id="export-csv-btn" type="button" style="align-self:flex-end;margin-bottom:12px">Export CSV</button>
           <button class="btn secondary" id="export-xlsx-btn" type="button" style="align-self:flex-end;margin-bottom:12px">Export Excel</button>
+          <button class="btn secondary" id="export-paper-btn" type="button" style="align-self:flex-end;margin-bottom:12px">Export Paper Addresses (CSV)</button>
         </div>
         <table>
           <thead><tr><th>Name</th><th>Channel</th><th>Mailing</th><th>Sent</th><th>Status</th><th></th></tr></thead>
@@ -68,6 +79,7 @@ window.Pages.tracking = {
       return rows.filter((r) => {
         if (statusFilter === "responded" && r.status !== "responded") return false;
         if (statusFilter === "not-responded" && r.status === "responded") return false;
+        if (channelFilter !== "all" && r.channel !== channelFilter) return false;
         if (searchTerm) {
           const hay = `${r.contact?.name || ""} ${r.contact?.email || ""}`.toLowerCase();
           if (!hay.includes(searchTerm)) return false;
@@ -86,6 +98,62 @@ window.Pages.tracking = {
       `;
     }
 
+    function detailRow(label, value) {
+      if (!value) return "";
+      return `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value)}</td></tr>`;
+    }
+
+    function detailHtml(r) {
+      const c = r.contact;
+      const extraEntries = Object.entries(c?.extra || {}).filter(([, v]) => v);
+      return `
+        <div class="row" style="align-items:flex-start;gap:40px;padding:12px 4px">
+          <div>
+            <h2 style="margin-top:0">Recipient</h2>
+            <table class="detail-table">
+              ${detailRow("Recipient ID", r.id)}
+              ${detailRow("Contact ID", r.contactId)}
+              ${detailRow("Mailing", r.mailingName)}
+              ${detailRow("Channel", r.channel)}
+              ${detailRow("Status", r.status)}
+              ${detailRow("Sent at", formatDate(r.sentAt))}
+              ${detailRow("Generated file", r.generatedFilePath)}
+              ${detailRow("Response token", r.responseToken)}
+              ${detailRow("Responded via", r.response?.channel)}
+              ${detailRow("Responded at", r.response?.receivedAt ? formatDate(r.response.receivedAt) : "")}
+              ${detailRow("Response notes", r.response?.notes)}
+              ${detailRow("Response attachment", r.response?.attachmentPath)}
+            </table>
+          </div>
+          <div>
+            <h2 style="margin-top:0">Contact</h2>
+            ${
+              c
+                ? `<table class="detail-table">
+                    ${detailRow("ID", c.externalId)}
+                    ${detailRow("Name", c.name)}
+                    ${detailRow("Email", c.email)}
+                    ${detailRow("Address line 1", c.addressLine1)}
+                    ${detailRow("Address line 2", c.addressLine2)}
+                    ${detailRow("City", c.city)}
+                    ${detailRow("State", c.state)}
+                    ${detailRow("ZIP", c.zip)}
+                    ${detailRow("Source batch", c.sourceBatch)}
+                  </table>
+                  ${
+                    extraEntries.length
+                      ? `<h2>Extra fields from import</h2><table class="detail-table">${extraEntries
+                          .map(([k, v]) => detailRow(k, v))
+                          .join("")}</table>`
+                      : ""
+                  }`
+                : `<p class="hint">No contact record matches contact ID "${escapeHtml(r.contactId || "")}" — it was likely deleted or re-imported after this mailing was created. That's why name/address are blank for this recipient.</p>`
+            }
+          </div>
+        </div>
+      `;
+    }
+
     function renderTable() {
       const list = filteredRows();
       const body = qs("#tracking-rows", container);
@@ -93,7 +161,7 @@ window.Pages.tracking = {
       body.innerHTML = list
         .map(
           (r) => `
-        <tr data-row="${r.id}">
+        <tr class="tracking-row" data-row="${r.id}">
           <td>${escapeHtml(r.contact?.name || "")}<br/><span class="hint">${escapeHtml(r.contact?.email || "")}</span></td>
           <td><span class="badge ${r.channel === "email" ? "badge-email" : "badge-paper"}">${r.channel}</span></td>
           <td>${escapeHtml(r.mailingName)}</td>
@@ -110,12 +178,22 @@ window.Pages.tracking = {
             ${r.generatedFilePath ? `<button class="btn secondary" data-open="${escapeHtml(r.generatedFilePath)}" type="button">Open letter</button>` : ""}
           </td>
         </tr>
-        <tr class="mark-form-row" id="mark-form-${r.id}" style="display:none"><td colspan="6"></td></tr>`
+        <tr class="mark-form-row" id="mark-form-${r.id}" style="display:none"><td colspan="6"></td></tr>
+        <tr class="tracking-detail-row" id="detail-${r.id}" style="display:${expandedId === r.id ? "table-row" : "none"}">
+          <td colspan="6">${expandedId === r.id ? detailHtml(r) : ""}</td>
+        </tr>`
         )
         .join("");
 
-      qsa("[data-mark]", body).forEach((btn) => btn.addEventListener("click", () => openMarkForm(btn.dataset.mark)));
-      qsa("[data-open]", body).forEach((btn) => btn.addEventListener("click", () => window.api.openPath(btn.dataset.open)));
+      qsa("[data-mark]", body).forEach((btn) => btn.addEventListener("click", (e) => { e.stopPropagation(); openMarkForm(btn.dataset.mark); }));
+      qsa("[data-open]", body).forEach((btn) => btn.addEventListener("click", (e) => { e.stopPropagation(); window.api.openPath(btn.dataset.open); }));
+      qsa(".tracking-row", body).forEach((row) => {
+        row.addEventListener("click", (e) => {
+          if (e.target.closest("button")) return;
+          expandedId = expandedId === row.dataset.row ? null : row.dataset.row;
+          renderTable();
+        });
+      });
     }
 
     function openMarkForm(recipientId) {
@@ -173,6 +251,10 @@ window.Pages.tracking = {
       statusFilter = e.target.value;
       renderTable();
     });
+    qs("#channel-filter", container).addEventListener("change", (e) => {
+      channelFilter = e.target.value;
+      renderTable();
+    });
     qs("#search-box", container).addEventListener("input", (e) => {
       searchTerm = e.target.value.toLowerCase();
       renderTable();
@@ -197,6 +279,10 @@ window.Pages.tracking = {
     });
     qs("#export-xlsx-btn", container).addEventListener("click", async () => {
       const savedPath = await window.api.exportTracking(mailingFilter || undefined, "xlsx");
+      if (savedPath) toast(`Exported to ${savedPath}`);
+    });
+    qs("#export-paper-btn", container).addEventListener("click", async () => {
+      const savedPath = await window.api.exportPaperAddresses(mailingFilter || undefined);
       if (savedPath) toast(`Exported to ${savedPath}`);
     });
 

@@ -511,6 +511,39 @@ ipcMain.handle("tracking:export", async (event, mailingId, format) => {
   return result.filePath;
 });
 
+ipcMain.handle("tracking:export-paper-addresses", async (event, mailingId) => {
+  const recipients = (mailingId
+    ? store.list("mailingRecipients").filter((r) => r.mailingId === mailingId)
+    : store.list("mailingRecipients")
+  ).filter((r) => r.channel === "paper");
+  const contacts = new Map(store.list("contacts").map((c) => [c.id, c]));
+
+  const rows = recipients.map((r) => {
+    const contact = contacts.get(r.contactId);
+    return {
+      ID: contact?.externalId || "",
+      "Contact ID": r.contactId || "",
+      Name: contact?.name || "",
+      "Address Line 1": contact?.addressLine1 || "",
+      "Address Line 2": contact?.addressLine2 || "",
+      City: contact?.city || "",
+      State: contact?.state || "",
+      Zip: contact?.zip || "",
+    };
+  });
+
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: "Export paper mailing addresses",
+    defaultPath: "formtracker-paper-addresses.csv",
+    filters: [{ name: "CSV", extensions: ["csv"] }],
+  });
+  if (result.canceled || !result.filePath) return null;
+
+  const Papa = require("papaparse");
+  fs.writeFileSync(result.filePath, Papa.unparse(rows), "utf8");
+  return result.filePath;
+});
+
 // ---------------------------------------------------------------------------
 // Gravity Forms sync
 // ---------------------------------------------------------------------------
