@@ -2,14 +2,18 @@
 
 window.Pages.mailings = {
   async render(container) {
-    const [mailings, allRecipients] = await Promise.all([window.api.listMailings(), window.api.listTracking()]);
+    const [mailings, allRecipients, gravityForms] = await Promise.all([
+      window.api.listMailings(),
+      window.api.listTracking(),
+      window.api.listGravityForms(),
+    ]);
 
     container.innerHTML = `
       <h1>Mailings</h1>
       <p class="subtitle">Review a mailing's split before sending. Sending emails goes out immediately; paper mailings generate print-ready letters for you to print and mail.</p>
       <div class="panel">
         <table>
-          <thead><tr><th>Name</th><th>Status</th><th>Email</th><th>Paper</th><th>Responded</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Form</th><th>Status</th><th>Email</th><th>Paper</th><th>Responded</th><th></th></tr></thead>
           <tbody id="mailing-rows"></tbody>
         </table>
         <div id="mailing-empty" class="empty" style="display:none">No mailings yet — create one from "New Mailing".</div>
@@ -24,6 +28,13 @@ window.Pages.mailings = {
         responded: rows.filter((r) => r.status === "responded").length,
         total: rows.length,
       };
+    }
+
+    function formCellHtml(mailing) {
+      if (!mailing.gravityFormId) return `<span class="hint">None</span>`;
+      const gf = gravityForms.find((g) => g.id === mailing.gravityFormId);
+      if (!gf) return `<span class="hint">Deleted connection</span>`;
+      return `${escapeHtml(gf.name)} <span class="hint">#${escapeHtml(gf.formId)}</span>`;
     }
 
     function filtersHtml(mailing) {
@@ -57,6 +68,7 @@ window.Pages.mailings = {
           return `
         <tr>
           <td>${escapeHtml(m.name)}</td>
+          <td>${formCellHtml(m)}</td>
           <td><span class="badge badge-${m.status === "sent" ? "sent" : "pending"}">${m.status}</span></td>
           <td>${stats.email}</td>
           <td>${stats.paper}</td>
@@ -71,7 +83,7 @@ window.Pages.mailings = {
             ${m.status === "sent" ? "" : `<button class="btn danger" data-delete="${m.id}" type="button">Delete</button>`}
           </td>
         </tr>
-        <tr class="filters-row" id="filters-row-${m.id}" style="display:none"><td colspan="6"></td></tr>`;
+        <tr class="filters-row" id="filters-row-${m.id}" style="display:none"><td colspan="7"></td></tr>`;
         })
         .join("");
 

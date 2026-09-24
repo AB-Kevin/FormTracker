@@ -2,7 +2,7 @@
 
 window.Pages["gravity-forms"] = {
   async render(container) {
-    let connections = await window.api.listGravityForms();
+    let [connections, mailings] = await Promise.all([window.api.listGravityForms(), window.api.listMailings()]);
     let editingId = null;
     let discoveredForms = [];
 
@@ -74,7 +74,7 @@ window.Pages["gravity-forms"] = {
       <h2>Registered connections</h2>
       <div class="panel">
         <table>
-          <thead><tr><th>Name</th><th>Site</th><th>Form ID</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Site</th><th>Form ID</th><th>Used by</th><th></th></tr></thead>
           <tbody id="gf-rows"></tbody>
         </table>
         <div id="gf-empty" class="empty" style="display:none">No connections yet.</div>
@@ -122,22 +122,28 @@ window.Pages["gravity-forms"] = {
       }
     });
 
+    function usageCount(connectionId) {
+      return mailings.filter((m) => m.gravityFormId === connectionId).length;
+    }
+
     function renderList() {
       const body = qs("#gf-rows", container);
       qs("#gf-empty", container).style.display = connections.length ? "none" : "block";
       body.innerHTML = connections
-        .map(
-          (c) => `
+        .map((c) => {
+          const count = usageCount(c.id);
+          return `
         <tr>
           <td>${escapeHtml(c.name)}</td>
           <td>${escapeHtml(c.siteUrl)}</td>
           <td>${escapeHtml(c.formId)}</td>
+          <td>${count} mailing${count === 1 ? "" : "s"}</td>
           <td>
             <button class="btn secondary" data-edit="${c.id}">Edit</button>
             <button class="btn danger" data-delete="${c.id}">Delete</button>
           </td>
-        </tr>`
-        )
+        </tr>`;
+        })
         .join("");
       qsa("[data-edit]", body).forEach((btn) =>
         btn.addEventListener("click", () => {
