@@ -62,8 +62,14 @@ window.Pages["gravity-forms"] = {
             <label>Hidden token field ID</label>
             <input type="text" id="gf-token-field-id" placeholder="e.g. 12" />
           </div>
+          <div class="field">
+            <label>Member ID field ID</label>
+            <input type="text" id="gf-member-id-field-id" placeholder="optional, e.g. 3" />
+          </div>
         </div>
-        <p class="hint">The field ID is shown in the Gravity Forms editor when you click the hidden field (its "Field ID" appears in the URL/field settings).</p>
+        <p class="hint">Field IDs are shown in the Gravity Forms editor when you click a field (its "Field ID" appears in the field settings).
+          If the form asks members for their member ID, entries without a token are matched by it against the contacts' ID column;
+          anything that can't be matched with confidence is listed on the Tracking page to match by hand.</p>
 
         <div class="row" style="margin-top:12px">
           <button class="btn" id="save-gf-btn">Save connection</button>
@@ -93,6 +99,7 @@ window.Pages["gravity-forms"] = {
       qs("#gf-page-url", container).value = "";
       qs("#gf-token-param", container).value = "rtoken";
       qs("#gf-token-field-id", container).value = "";
+      qs("#gf-member-id-field-id", container).value = "";
       qs("#form-picker-field", container).style.display = "none";
       qs("#cancel-edit-btn", container).style.display = "none";
     }
@@ -158,6 +165,7 @@ window.Pages["gravity-forms"] = {
           qs("#gf-page-url", container).value = c.pageUrl;
           qs("#gf-token-param", container).value = c.tokenParamName || "rtoken";
           qs("#gf-token-field-id", container).value = c.tokenFieldId || "";
+          qs("#gf-member-id-field-id", container).value = c.memberIdFieldId || "";
           qs("#cancel-edit-btn", container).style.display = "inline-block";
           window.scrollTo(0, 0);
         })
@@ -182,6 +190,7 @@ window.Pages["gravity-forms"] = {
       const pageUrl = qs("#gf-page-url", container).value.trim();
       const tokenParamName = qs("#gf-token-param", container).value.trim() || "rtoken";
       const tokenFieldId = qs("#gf-token-field-id", container).value.trim();
+      const memberIdFieldId = qs("#gf-member-id-field-id", container).value.trim();
 
       if (!name || !siteUrl || !consumerKey || !formId || !pageUrl || !tokenFieldId) {
         toast("Fill in name, site URL, consumer key, form ID, page URL, and token field ID.", true);
@@ -192,7 +201,7 @@ window.Pages["gravity-forms"] = {
         return;
       }
 
-      const data = { name, siteUrl, consumerKey, formId, pageUrl, tokenParamName, tokenFieldId };
+      const data = { name, siteUrl, consumerKey, formId, pageUrl, tokenParamName, tokenFieldId, memberIdFieldId };
       if (consumerSecret) data.consumerSecret = consumerSecret;
 
       if (editingId) {

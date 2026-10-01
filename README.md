@@ -9,7 +9,7 @@ A desktop tool to send form requests to a mailing list — by email or paper mai
 3. Contacts with an email address get the email version; everyone else gets the paper version.
 4. Email and paper mailings use separate templates.
 5. The email contains a personalized link to a Gravity Forms web form (on your own website) plus a fillable PDF attachment, pre-filled where possible.
-6. Responses are tracked no matter how they come back: submitted online (auto-detected), emailed back as a completed PDF, or mailed back on paper (both recorded manually with an optional scan/file attached).
+6. Responses are tracked no matter how they come back: submitted online (auto-detected by the link's token or the member ID typed into the form), emailed back as a completed PDF, or mailed back on paper (both recorded manually with an optional scan/file attached).
 7. The tracking table exports to CSV or Excel.
 8. The tracking page shows at a glance who has and hasn't replied.
 
@@ -37,8 +37,9 @@ FormTracker doesn't host the web form itself — it uses a form already on your 
 2. **Enable the REST API.** Under *Gravity Forms → Settings → REST API*, enable the API and turn on **Basic Authentication** (your site must be HTTPS). Create a new API key with at least read access, and note the **Consumer Key** and **Consumer Secret**.
 3. **Note the form ID and page URL.** The form's numeric ID is visible in the Forms list. Note the public page URL where the form is embedded.
 4. In FormTracker, go to **Gravity Forms**, fill in the site URL and consumer key/secret, click **Test connection** to confirm and pick the form, then fill in the page URL, token parameter name, and the hidden field's ID.
+5. *(Optional)* If the form asks for a member ID, also fill in that field's ID as **Member ID field ID**. Submissions without a token (e.g. from a plain link to the form) are then matched against the contacts' ID column — ignoring case and spacing, and treating look-alike characters such as O/0 and I/L/1 as the same when that still points to exactly one member.
 
-FormTracker never needs an inbound connection to your computer — it only reaches out to the Gravity Forms REST API, on a 5-minute timer or when you click **Sync Gravity Forms now** on the Tracking page, to pull in new submissions and match them to recipients by their token.
+FormTracker never needs an inbound connection to your computer — it only reaches out to the Gravity Forms REST API, on a 5-minute timer or when you click **Sync Gravity Forms now** on the Tracking page, to pull in new submissions and match them to recipients. Only submissions made after a mailing was created are considered. Anything that can't be matched with confidence is listed under **Online responses to match** on the Tracking page, with suggested members, to match by hand or dismiss.
 
 ## Typical workflow
 
@@ -47,8 +48,8 @@ FormTracker never needs an inbound connection to your computer — it only reach
 3. **Gravity Forms** — register your form connection (one-time, see above).
 4. **Settings** — enter your SMTP details and send a test.
 5. **New Mailing** — filter your contacts, pick templates and the Gravity Forms connection, create the mailing.
-6. **Mailings** — review the email/paper split, then **Send**. Emails go out immediately; paper mailings generate a print-ready letter PDF per recipient (open it from the Tracking page) for you to print and mail.
-7. **Tracking** — see who has and hasn't responded. Online responses show up automatically after a sync. Use **Mark received…** to record an emailed-back PDF or a mailed-back paper form, with an optional attached scan. Export to CSV/Excel any time.
+6. **Mailings** — review the email/paper split, then **Send**. Emails go out immediately; paper mailings generate a print-ready letter PDF per recipient (open it from the Tracking page) for you to print and mail. Any email that fails (a bad address, say) shows as **Send failed** on the Tracking page with the error; use **Fix & resend…** to correct the address, or clear it to send a paper letter instead.
+7. **Tracking** — see who has and hasn't responded. Online responses show up automatically after a sync. Use **Mark received…** to record an emailed-back PDF or a mailed-back paper form, with an optional attached scan. Once a response has been entered into the office's records software, tick its **Entered** box (the date is recorded); filter Status to **Responded — not yet entered** to see what's still waiting. Export to CSV/Excel any time.
 
 ## Project layout
 

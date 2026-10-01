@@ -8,9 +8,25 @@ document.addEventListener("DOMContentLoaded", async () => {
   const version = await window.api.getVersion();
   qs("#version-tag").textContent = `v${version}`;
 
+  // Background syncs only speak up when something changed, so a connection
+  // that stays broken (or a review list nobody has gotten to yet) doesn't
+  // toast every five minutes.
+  let lastSyncErrors = "";
+  let lastNeedsReview = 0;
   window.api.onSyncCompleted((summary) => {
+    const errors = summary.errors.join("; ");
+    if (errors && errors !== lastSyncErrors) toast(`Gravity Forms sync problem — ${errors}`, true);
+    lastSyncErrors = errors;
+    const moreToReview = summary.needsReview > lastNeedsReview;
+    lastNeedsReview = summary.needsReview;
+
     if (summary.matched > 0) {
       toast(`Gravity Forms sync: ${summary.matched} new response${summary.matched === 1 ? "" : "s"} matched.`);
+    }
+    if (moreToReview) {
+      toast(`${summary.needsReview} Gravity Forms entr${summary.needsReview === 1 ? "y needs" : "ies need"} matching by hand on the Tracking page.`);
+    }
+    if (summary.matched > 0 || moreToReview) {
       const active = qs(".nav-btn.active");
       if (active && active.dataset.page === "tracking") navigate("tracking");
     }

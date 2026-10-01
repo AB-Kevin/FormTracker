@@ -136,6 +136,19 @@ tr:hover td { background: #fafbfd; }
 .badge-responded { background: #e3f6ec; color: var(--success); }
 .badge-email { background: #eef2ff; color: #4338ca; }
 .badge-paper { background: #fdf3e2; color: var(--warn); }
+.badge-failed { background: #fdeaea; color: var(--danger); }
+.badge-link { cursor: pointer; }
+
+/* A failed send's SMTP error can run long; the full text is in the tooltip
+   and the row's detail view. */
+.send-error {
+  display: inline-block;
+  max-width: 280px;
+  color: var(--danger);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .empty, .loading { color: var(--muted); padding: 40px 0; text-align: center; }
 
@@ -149,6 +162,11 @@ tr:hover td { background: #fafbfd; }
 }
 .stat-card .num { font-size: 22px; font-weight: 700; }
 .stat-card .label { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+.stat-card-failed .num { color: var(--danger); }
+
+.entered-check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.entered-check input { width: 16px; height: 16px; margin: 0; cursor: pointer; accent-color: var(--success); }
+.entered-check .hint { margin-top: 0; white-space: nowrap; }
 
 .filter-rule { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
 

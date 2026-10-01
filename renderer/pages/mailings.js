@@ -13,7 +13,7 @@ window.Pages.mailings = {
       <p class="subtitle">Review a mailing's split before sending. Sending emails goes out immediately; paper mailings generate print-ready letters for you to print and mail.</p>
       <div class="panel">
         <table>
-          <thead><tr><th>Name</th><th>Form</th><th>Status</th><th>Email</th><th>Paper</th><th>Responded</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Form</th><th>Status</th><th>Email</th><th>Paper</th><th>Responded</th><th title="Responses entered into our records software">Entered</th><th></th></tr></thead>
           <tbody id="mailing-rows"></tbody>
         </table>
         <div id="mailing-empty" class="empty" style="display:none">No mailings yet — create one from "New Mailing".</div>
@@ -26,6 +26,8 @@ window.Pages.mailings = {
         email: rows.filter((r) => r.channel === "email").length,
         paper: rows.filter((r) => r.channel === "paper").length,
         responded: rows.filter((r) => r.status === "responded").length,
+        entered: rows.filter((r) => r.status === "responded" && r.enteredAt).length,
+        failed: rows.filter((r) => r.status === "pending" && r.error).length,
         total: rows.length,
       };
     }
@@ -69,10 +71,15 @@ window.Pages.mailings = {
         <tr>
           <td>${escapeHtml(m.name)}</td>
           <td>${formCellHtml(m)}</td>
-          <td><span class="badge badge-${m.status === "sent" ? "sent" : "pending"}">${m.status}</span></td>
+          <td><span class="badge badge-${m.status === "sent" ? "sent" : "pending"}">${m.status}</span>${
+            stats.failed
+              ? ` <span class="badge badge-failed badge-link" data-failed="${m.id}" title="Show on the Tracking page">${stats.failed} failed</span>`
+              : ""
+          }</td>
           <td>${stats.email}</td>
           <td>${stats.paper}</td>
           <td>${stats.responded} / ${stats.total}</td>
+          <td>${stats.entered} / ${stats.responded}</td>
           <td>
             <button class="btn" data-send="${m.id}" ${m.status === "sent" ? "disabled" : ""}>${
             m.status === "sent" ? "Sent" : "Send"
@@ -83,7 +90,7 @@ window.Pages.mailings = {
             ${m.status === "sent" ? "" : `<button class="btn danger" data-delete="${m.id}" type="button">Delete</button>`}
           </td>
         </tr>
-        <tr class="filters-row" id="filters-row-${m.id}" style="display:none"><td colspan="7"></td></tr>`;
+        <tr class="filters-row" id="filters-row-${m.id}" style="display:none"><td colspan="8"></td></tr>`;
         })
         .join("");
 
@@ -96,9 +103,8 @@ window.Pages.mailings = {
             const result = await window.api.sendMailing(btn.dataset.send);
             toast(
               `Sent ${result.sent} email(s), generated ${result.generated} paper letter(s)` +
-                (result.errors.length ? `, ${result.errors.length} error(s).` : ".")
+                (result.errors.length ? `, ${result.errors.length} failed — click "failed" next to the mailing to fix them.` : ".")
             );
-            if (result.errors.length) console.error(result.errors);
             navigate("mailings");
           } catch (err) {
             toast(`Send failed: ${err.message}`, true);
@@ -119,6 +125,13 @@ window.Pages.mailings = {
           }
           btn.disabled = false;
           btn.textContent = "Test";
+        })
+      );
+      qsa("[data-failed]", body).forEach((badge) =>
+        badge.addEventListener("click", () => {
+          window.__trackingMailingFilter = badge.dataset.failed;
+          window.__trackingStatusFilter = "failed";
+          navigate("tracking");
         })
       );
       qsa("[data-view]", body).forEach((btn) =>

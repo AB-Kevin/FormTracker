@@ -70,7 +70,9 @@ app.whenReady().then(() => {
   store.init(app.getPath("userData"));
   createWindow();
   setInterval(() => {
-    runSync().catch((err) => console.error("Background sync failed:", err));
+    runSync()
+      .then((summary) => mainWindow?.webContents.send("sync:completed", summary))
+      .catch((err) => console.error("Background sync failed:", err));
   }, SYNC_INTERVAL_MS);
 
   app.on("activate", () => {
@@ -295,13 +297,65 @@ ipcMain.handle("mailings:delete", async (event, id) => {
   return true;
 });
 
+function loadSendContext(mailing) {
+  return {
+    emailTemplate: mailing.templateId ? store.get("templates", mailing.templateId) : null,
+    paperTemplate: mailing.paperTemplateId ? store.get("templates", mailing.paperTemplateId) : null,
+    gravityForm: mailing.gravityFormId ? store.get("gravityForms", mailing.gravityFormId) : null,
+    smtpConfig: resolveSmtpConfig(),
+  };
+}
+
+// Emails one recipient, or generates their paper letter, and records the
+// outcome on the recipient. Returns "sent" or "generated". A failure is saved
+// as the recipient's `error` (the Tracking page shows it as "Send failed",
+// with a way to fix the address and retry) and then rethrown.
+async function deliverToRecipient(recipient, contact, { emailTemplate, paperTemplate, gravityForm, smtpConfig }) {
+  const link = gravityForm ? buildResponseLink(gravityForm, recipient.responseToken) : "";
+  const extraContext = { form_link: link };
+  try {
+    if (recipient.channel === "email") {
+      if (!emailTemplate) throw new Error("No email template selected for this mailing.");
+      const subject = renderTemplate(emailTemplate.subject, contact, extraContext);
+      const bodyHtml = renderTemplate(emailTemplate.body, contact, extraContext);
+      const attachments = [];
+      if (emailTemplate.pdfPath) {
+        const templateBytes = fs.readFileSync(emailTemplate.pdfPath);
+        const filled = await fillPdf(templateBytes, contact, recipient.responseToken);
+        attachments.push({ filename: `form-${recipient.responseToken}.pdf`, content: Buffer.from(filled) });
+      }
+      await mailer.sendMail(smtpConfig, {
+        to: contact.email,
+        subject,
+        html: bodyHtml,
+        text: htmlToPlainText(bodyHtml),
+        attachments,
+      });
+      store.update("mailingRecipients", recipient.id, { status: "sent", sentAt: new Date().toISOString(), error: null });
+      return "sent";
+    }
+    if (!paperTemplate) throw new Error("No paper template selected for this mailing.");
+    const body = renderTemplate(paperTemplate.body, contact, extraContext);
+    const letterBytes = await generatePaperLetter(body, contact, recipient.responseToken);
+    const destPath = path.join(store.getDataDir(), "generated-letters", `${recipient.responseToken}.pdf`);
+    fs.writeFileSync(destPath, letterBytes);
+    store.update("mailingRecipients", recipient.id, {
+      status: "sent",
+      sentAt: new Date().toISOString(),
+      generatedFilePath: destPath,
+      error: null,
+    });
+    return "generated";
+  } catch (err) {
+    store.update("mailingRecipients", recipient.id, { error: err.message });
+    throw err;
+  }
+}
+
 ipcMain.handle("mailings:send", async (event, mailingId) => {
   const mailing = store.get("mailings", mailingId);
   if (!mailing) throw new Error("Mailing not found.");
-  const emailTemplate = mailing.templateId ? store.get("templates", mailing.templateId) : null;
-  const paperTemplate = mailing.paperTemplateId ? store.get("templates", mailing.paperTemplateId) : null;
-  const gravityForm = mailing.gravityFormId ? store.get("gravityForms", mailing.gravityFormId) : null;
-  const smtpConfig = resolveSmtpConfig();
+  const context = loadSendContext(mailing);
 
   const recipients = store.list("mailingRecipients").filter((r) => r.mailingId === mailingId && r.status === "pending");
   const contactById = new Map(store.list("contacts").map((c) => [c.id, c]));
@@ -311,43 +365,10 @@ ipcMain.handle("mailings:send", async (event, mailingId) => {
   for (const recipient of recipients) {
     const contact = contactById.get(recipient.contactId);
     if (!contact) continue;
-    const link = gravityForm ? buildResponseLink(gravityForm, recipient.responseToken) : "";
-    const extraContext = { form_link: link };
     try {
-      if (recipient.channel === "email") {
-        if (!emailTemplate) throw new Error("No email template selected for this mailing.");
-        const subject = renderTemplate(emailTemplate.subject, contact, extraContext);
-        const bodyHtml = renderTemplate(emailTemplate.body, contact, extraContext);
-        const attachments = [];
-        if (emailTemplate.pdfPath) {
-          const templateBytes = fs.readFileSync(emailTemplate.pdfPath);
-          const filled = await fillPdf(templateBytes, contact, recipient.responseToken);
-          attachments.push({ filename: `form-${recipient.responseToken}.pdf`, content: Buffer.from(filled) });
-        }
-        await mailer.sendMail(smtpConfig, {
-          to: contact.email,
-          subject,
-          html: bodyHtml,
-          text: htmlToPlainText(bodyHtml),
-          attachments,
-        });
-        store.update("mailingRecipients", recipient.id, { status: "sent", sentAt: new Date().toISOString() });
-        results.sent++;
-      } else {
-        if (!paperTemplate) throw new Error("No paper template selected for this mailing.");
-        const body = renderTemplate(paperTemplate.body, contact, extraContext);
-        const letterBytes = await generatePaperLetter(body, contact, recipient.responseToken);
-        const destPath = path.join(store.getDataDir(), "generated-letters", `${recipient.responseToken}.pdf`);
-        fs.writeFileSync(destPath, letterBytes);
-        store.update("mailingRecipients", recipient.id, {
-          status: "sent",
-          sentAt: new Date().toISOString(),
-          generatedFilePath: destPath,
-        });
-        results.generated++;
-      }
+      const outcome = await deliverToRecipient(recipient, contact, context);
+      results[outcome]++;
     } catch (err) {
-      store.update("mailingRecipients", recipient.id, { error: err.message });
       results.errors.push({ contactId: recipient.contactId, error: err.message });
     }
   }
@@ -490,6 +511,21 @@ ipcMain.handle("tracking:mark-mailed", async (event, recipientIds) => {
   return { updated };
 });
 
+// Records (or clears) when a response was entered into the office's own
+// records software -- a manual step done after each response comes in.
+// Only applies to recipients who have responded. Takes an array like
+// tracking:mark-mailed.
+ipcMain.handle("tracking:set-entered", async (event, recipientIds, entered) => {
+  const ids = new Set(recipientIds || []);
+  const now = new Date().toISOString();
+  const updated = store.updateWhere("mailingRecipients", (recipient) => {
+    if (!ids.has(recipient.id) || recipient.status !== "responded") return null;
+    if (entered ? recipient.enteredAt : !recipient.enteredAt) return null;
+    return { enteredAt: entered ? now : null };
+  });
+  return { updated };
+});
+
 // Undoes tracking:mark-mailed. A paper recipient with no generated letter can
 // only have reached "sent" by being marked mailed, so it goes back to pending.
 ipcMain.handle("tracking:unmark-mailed", async (event, recipientId) => {
@@ -511,6 +547,25 @@ ipcMain.handle("tracking:remove-recipient", async (event, recipientId) => {
   store.removeWhere("responses", (resp) => resp.mailingRecipientId === recipientId);
   store.remove("mailingRecipients", recipientId);
   return true;
+});
+
+// Retries one recipient whose send failed, after saving a corrected email
+// address on their contact. A blank address switches them to a paper letter
+// instead -- e.g. a contact imported with "N/A" in the email column.
+ipcMain.handle("tracking:retry-send", async (event, recipientId, email) => {
+  const recipient = store.get("mailingRecipients", recipientId);
+  if (!recipient) throw new Error("Recipient not found.");
+  if (recipient.status !== "pending") throw new Error("This recipient has already been sent.");
+  const mailing = store.get("mailings", recipient.mailingId);
+  const contact = store.get("contacts", recipient.contactId);
+  if (!mailing || !contact) throw new Error("This recipient's mailing or contact no longer exists.");
+
+  const cleaned = String(email || "").trim();
+  const nextContact = cleaned === contact.email ? contact : store.update("contacts", contact.id, { email: cleaned });
+  const channel = cleaned ? "email" : "paper";
+  const nextRecipient = channel === recipient.channel ? recipient : store.update("mailingRecipients", recipient.id, { channel });
+  const outcome = await deliverToRecipient(nextRecipient, nextContact, loadSendContext(mailing));
+  return { outcome };
 });
 
 // Both exports take the recipient IDs currently shown on the Tracking page, so
@@ -539,6 +594,7 @@ ipcMain.handle("tracking:export", async (event, recipientIds, format) => {
       "Mailed At": r.mailedAt || "",
       "Responded Via": latest ? latest.channel : "",
       "Responded At": latest ? latest.receivedAt : "",
+      "Entered At": r.enteredAt || "",
       Token: r.responseToken,
     };
   });
@@ -598,51 +654,185 @@ ipcMain.handle("tracking:export-paper-addresses", async (event, recipientIds) =>
 // Gravity Forms sync
 // ---------------------------------------------------------------------------
 
-async function runSync() {
-  const gravityFormConfigs = store.list("gravityForms");
-  const allResponses = store.list("responses");
-  const allRecipients = store.list("mailingRecipients");
+function recordWebResponse(recipientId, { entry, entryId, submittedAt, matchedBy, memberIdEntered }) {
+  store.insert("responses", {
+    mailingRecipientId: recipientId,
+    channel: "web",
+    receivedAt: (submittedAt || new Date()).toISOString(),
+    data: entry,
+    gfEntryId: entryId,
+    matchedBy,
+    memberIdEntered: memberIdEntered || "",
+    attachmentPath: null,
+    notes: "",
+    recordedBy: matchedBy === "manual" ? "manual-review" : "gravity-forms-sync",
+  });
+  store.update("mailingRecipients", recipientId, { status: "responded" });
+}
+
+async function syncGravityForms() {
+  const summary = { matched: 0, needsReview: 0, errors: [] };
   const mailings = store.list("mailings");
-  let totalMatched = 0;
+  const contactById = new Map(store.list("contacts").map((c) => [c.id, c]));
 
-  for (const gf of gravityFormConfigs) {
-    if (!gf.formId || !gf.tokenFieldId) continue;
+  for (const gf of store.list("gravityForms")) {
+    if (!gf.formId || (!gf.tokenFieldId && !gf.memberIdFieldId)) continue;
+    const linkedMailings = new Map(mailings.filter((m) => m.gravityFormId === gf.id).map((m) => [m.id, m]));
+    if (linkedMailings.size === 0) continue;
+    const recipients = store.list("mailingRecipients").filter((r) => linkedMailings.has(r.mailingId));
+    if (recipients.length === 0) continue;
+
     const config = { ...gf, consumerSecret: decryptSecret(gf.consumerSecret) };
-    const mailingIds = new Set(mailings.filter((m) => m.gravityFormId === gf.id).map((m) => m.id));
-    if (mailingIds.size === 0) continue;
-    const pendingRecipients = allRecipients.filter((r) => mailingIds.has(r.mailingId) && r.status !== "responded");
-    if (pendingRecipients.length === 0) continue;
-
-    const alreadySynced = allResponses.filter((r) => r.channel === "web" && r.gfEntryId).map((r) => r.gfEntryId);
+    const since = new Date(Math.min(...[...linkedMailings.values()].map((m) => new Date(m.createdAt).getTime())));
     let entries;
     try {
-      entries = await gravityForms.fetchEntries(config);
+      entries = await gravityForms.fetchEntries(config, since);
     } catch (err) {
       console.error(`Gravity Forms sync failed for "${gf.name}":`, err.message);
+      summary.errors.push(`${gf.name}: ${err.message}`);
       continue;
     }
-    const matches = gravityForms.matchEntriesToRecipients(entries, config, pendingRecipients, alreadySynced);
-    for (const { recipient, entry, entryId } of matches) {
-      store.insert("responses", {
-        mailingRecipientId: recipient.id,
-        channel: "web",
-        receivedAt: entry.date_created || new Date().toISOString(),
-        data: entry,
-        gfEntryId: entryId,
-        attachmentPath: null,
-        notes: "",
-        recordedBy: "gravity-forms-sync",
-      });
-      store.update("mailingRecipients", recipient.id, { status: "responded" });
-      totalMatched++;
-    }
-  }
+    // Only used to show who an unmatched entry is from, so failing to load
+    // it shouldn't stop the sync.
+    const form = await gravityForms.fetchForm(config).catch(() => null);
 
-  if (mainWindow) mainWindow.webContents.send("sync:completed", { matched: totalMatched });
-  return { matched: totalMatched };
+    const recorded = new Set(store.list("responses").filter((r) => r.gfEntryId).map((r) => r.gfEntryId));
+    const candidates = recipients.map((recipient) => ({
+      recipient,
+      memberId: contactById.get(recipient.contactId)?.externalId || "",
+      mailingCreatedAt: linkedMailings.get(recipient.mailingId).createdAt,
+    }));
+    const { matches, unmatched } = gravityForms.matchEntries(
+      entries.filter((e) => !recorded.has(String(e.id))),
+      config,
+      candidates
+    );
+
+    const responded = new Set(recipients.filter((r) => r.status === "responded").map((r) => r.id));
+    for (const match of matches) {
+      // Someone who already responded (by PDF, by paper, or in an earlier
+      // submission) submitting again isn't a new response.
+      if (responded.has(match.recipient.id)) continue;
+      recordWebResponse(match.recipient.id, match);
+      responded.add(match.recipient.id);
+      summary.matched++;
+    }
+
+    // The review list for this form is rebuilt from whatever still doesn't
+    // match, so entries resolved since the last sync drop off; each entry
+    // keeps its id and dismissed flag from before.
+    const previous = new Map(store.list("gfUnmatched").filter((u) => u.gravityFormId === gf.id).map((u) => [u.gfEntryId, u]));
+    const reviewRows = unmatched.map(({ entry, entryId, submittedAt, memberIdEntered, suggestions }) => {
+      const prior = previous.get(entryId);
+      const who = form ? gravityForms.summarizeEntry(entry, form) : { name: prior?.name || "", email: prior?.email || "" };
+      return {
+        ...(prior && { id: prior.id, createdAt: prior.createdAt }),
+        gravityFormId: gf.id,
+        gfEntryId: entryId,
+        submittedAt: submittedAt ? submittedAt.toISOString() : null,
+        memberIdEntered,
+        name: who.name,
+        email: who.email,
+        suggestedRecipientIds: suggestions.map((r) => r.id),
+        dismissed: !!prior?.dismissed,
+        entry,
+      };
+    });
+    store.removeWhere("gfUnmatched", (u) => u.gravityFormId === gf.id);
+    store.insertMany("gfUnmatched", reviewRows);
+    summary.needsReview += reviewRows.filter((r) => !r.dismissed).length;
+  }
+  return summary;
+}
+
+// The 5-minute timer and the "Sync now" button can overlap; both would read
+// the same already-recorded entries and record a new one twice.
+let syncInFlight = null;
+function runSync() {
+  if (!syncInFlight) syncInFlight = syncGravityForms().finally(() => (syncInFlight = null));
+  return syncInFlight;
 }
 
 ipcMain.handle("sync:run", async () => runSync());
+
+function describeRecipient(recipient, contactById, mailingById) {
+  const contact = contactById.get(recipient.contactId);
+  return {
+    recipientId: recipient.id,
+    name: contact?.name || "",
+    memberId: contact?.externalId || "",
+    mailingName: mailingById.get(recipient.mailingId)?.name || "",
+  };
+}
+
+// Gravity Forms entries the sync couldn't match to anyone, for a person to
+// match by hand. `choices` lists, per form, everyone in its mailings still
+// waiting on a response.
+ipcMain.handle("gf:review-list", async () => {
+  const connections = new Map(store.list("gravityForms").map((g) => [g.id, g]));
+  const items = store.list("gfUnmatched").filter((u) => !u.dismissed && connections.has(u.gravityFormId));
+  const mailings = store.list("mailings");
+  const mailingById = new Map(mailings.map((m) => [m.id, m]));
+  const contactById = new Map(store.list("contacts").map((c) => [c.id, c]));
+  const recipients = store.list("mailingRecipients");
+  const recipientById = new Map(recipients.map((r) => [r.id, r]));
+
+  const choices = {};
+  for (const gfId of new Set(items.map((u) => u.gravityFormId))) {
+    choices[gfId] = recipients
+      .filter((r) => mailingById.get(r.mailingId)?.gravityFormId === gfId && r.status !== "responded")
+      .map((r) => describeRecipient(r, contactById, mailingById))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  return {
+    choices,
+    items: items
+      .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt))
+      .map((u) => {
+        const gf = connections.get(u.gravityFormId);
+        return {
+          id: u.id,
+          gravityFormId: u.gravityFormId,
+          formName: gf.name,
+          memberIdFieldSet: !!gf.memberIdFieldId,
+          entryUrl: `${gf.siteUrl.replace(/\/+$/, "")}/wp-admin/admin.php?page=gf_entries&view=entry&id=${encodeURIComponent(gf.formId)}&lid=${encodeURIComponent(u.gfEntryId)}`,
+          submittedAt: u.submittedAt,
+          memberIdEntered: u.memberIdEntered,
+          name: u.name,
+          email: u.email,
+          suggestions: (u.suggestedRecipientIds || [])
+            .map((id) => recipientById.get(id))
+            .filter((r) => r && r.status !== "responded")
+            .map((r) => describeRecipient(r, contactById, mailingById)),
+        };
+      }),
+  };
+});
+
+ipcMain.handle("gf:review-assign", async (event, reviewId, recipientId) => {
+  const item = store.get("gfUnmatched", reviewId);
+  if (!item) throw new Error("This entry is no longer waiting for review -- try syncing again.");
+  const recipient = store.get("mailingRecipients", recipientId);
+  if (!recipient) throw new Error("Recipient not found.");
+  if (recipient.status === "responded") {
+    throw new Error("That member has already responded. If this entry is a duplicate, dismiss it instead.");
+  }
+  recordWebResponse(recipient.id, {
+    entry: item.entry,
+    entryId: item.gfEntryId,
+    submittedAt: item.submittedAt ? new Date(item.submittedAt) : null,
+    matchedBy: "manual",
+    memberIdEntered: item.memberIdEntered,
+  });
+  store.remove("gfUnmatched", item.id);
+  return true;
+});
+
+ipcMain.handle("gf:review-dismiss", async (event, reviewId) => {
+  if (!store.update("gfUnmatched", reviewId, { dismissed: true })) throw new Error("Entry not found.");
+  return true;
+});
 
 // ---------------------------------------------------------------------------
 // Misc

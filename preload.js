@@ -21,6 +21,9 @@ contextBridge.exposeInMainWorld("api", {
   createGravityForm: (data) => ipcRenderer.invoke("gf:create", data),
   updateGravityForm: (id, patch) => ipcRenderer.invoke("gf:update", id, patch),
   deleteGravityForm: (id) => ipcRenderer.invoke("gf:delete", id),
+  listGfReview: () => ipcRenderer.invoke("gf:review-list"),
+  assignGfReview: (reviewId, recipientId) => ipcRenderer.invoke("gf:review-assign", reviewId, recipientId),
+  dismissGfReview: (reviewId) => ipcRenderer.invoke("gf:review-dismiss", reviewId),
 
   getSettings: () => ipcRenderer.invoke("settings:get"),
   saveSmtpSettings: (data) => ipcRenderer.invoke("settings:save-smtp", data),
@@ -38,7 +41,9 @@ contextBridge.exposeInMainWorld("api", {
   markReceived: (recipientId, data) => ipcRenderer.invoke("tracking:mark-received", recipientId, data),
   markMailed: (recipientIds) => ipcRenderer.invoke("tracking:mark-mailed", recipientIds),
   unmarkMailed: (recipientId) => ipcRenderer.invoke("tracking:unmark-mailed", recipientId),
+  setEntered: (recipientIds, entered) => ipcRenderer.invoke("tracking:set-entered", recipientIds, entered),
   removeRecipient: (recipientId) => ipcRenderer.invoke("tracking:remove-recipient", recipientId),
+  retrySend: (recipientId, email) => ipcRenderer.invoke("tracking:retry-send", recipientId, email),
   exportTracking: (recipientIds, format) => ipcRenderer.invoke("tracking:export", recipientIds, format),
   exportPaperAddresses: (recipientIds) => ipcRenderer.invoke("tracking:export-paper-addresses", recipientIds),
 
