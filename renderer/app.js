@@ -37,6 +37,15 @@ function filterRuleNeedsValue(op) {
   return op !== "empty" && op !== "notEmpty";
 }
 
+// Shared by tracking.js and responses.js.
+const RESPONSE_CHANNEL_LABELS = { web: "Web form", email_pdf: "Emailed PDF", paper: "Mailed back" };
+const MATCHED_BY_LABELS = {
+  token: "Personalized link",
+  memberId: "Member ID",
+  memberIdLookalike: "Member ID (look-alike characters, e.g. O for 0)",
+  manual: "Matched by hand",
+};
+
 function formatDate(iso) {
   if (!iso) return "";
   const d = new Date(iso);
@@ -86,5 +95,7 @@ window.confirmAction = confirmAction;
 window.escapeHtml = escapeHtml;
 window.formatDate = formatDate;
 window.FILTER_OPS = FILTER_OPS;
+window.RESPONSE_CHANNEL_LABELS = RESPONSE_CHANNEL_LABELS;
+window.MATCHED_BY_LABELS = MATCHED_BY_LABELS;
 window.filterOpLabel = filterOpLabel;
 window.filterRuleNeedsValue = filterRuleNeedsValue;

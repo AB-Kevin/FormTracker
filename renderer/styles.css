@@ -226,3 +226,53 @@ tr:hover td { background: #fafbfd; }
 .detail-table th { width: 1%; white-space: nowrap; padding-right: 24px; color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: .03em; }
 
 .section-divider { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+
+/* Responses page: queue on the left, the selected response on the right. */
+.responses-layout { display: flex; gap: 20px; align-items: flex-start; }
+.responses-list-panel { width: 320px; flex-shrink: 0; position: sticky; top: 0; }
+.responses-list-panel select, .responses-list-panel input { width: 100%; }
+.responses-list { max-height: calc(100vh - 380px); min-height: 120px; overflow-y: auto; margin: 0 -8px; }
+.resp-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  padding: 8px;
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+}
+.resp-item:hover { background: #f4f6fa; }
+.resp-item.selected { background: #e6edfd; }
+.resp-item .hint { margin-top: 0; }
+.resp-item-name { font-weight: 600; }
+.resp-entered-mark { color: var(--success); font-weight: 600; font-size: 11.5px; }
+.responses-detail { flex: 1; min-width: 0; }
+.resp-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
+.resp-member-id { text-align: right; }
+.resp-member-id .label { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; font-weight: 600; }
+.resp-member-id-value { font-size: 22px; font-weight: 700; letter-spacing: .04em; }
+.resp-typed-note { color: var(--warn); }
+.resp-actions { margin: 16px 0 8px; }
+.resp-answers { width: 100%; }
+.resp-answers th {
+  width: 38%;
+  text-align: left;
+  vertical-align: top;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: normal;
+  /* Questions read as written on the form, not as an all-caps header. */
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 13px;
+}
+.resp-answers td { vertical-align: top; }
+.resp-answer { white-space: pre-wrap; word-break: break-word; }
+.resp-answers td:last-child { width: 1%; }
+.resp-section td { padding-top: 20px; font-weight: 700; font-size: 13.5px; border-bottom: 2px solid var(--border); }
+button.copy-btn { padding: 3px 10px; font-size: 12px; }

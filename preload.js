@@ -47,6 +47,10 @@ contextBridge.exposeInMainWorld("api", {
   exportTracking: (recipientIds, format) => ipcRenderer.invoke("tracking:export", recipientIds, format),
   exportPaperAddresses: (recipientIds) => ipcRenderer.invoke("tracking:export-paper-addresses", recipientIds),
 
+  listResponses: () => ipcRenderer.invoke("responses:list"),
+  getResponse: (recipientId, responseId) => ipcRenderer.invoke("responses:get", recipientId, responseId),
+  copyText: (text) => ipcRenderer.invoke("clipboard:write-text", text),
+
   runSync: () => ipcRenderer.invoke("sync:run"),
   onSyncCompleted: (callback) => {
     const listener = (event, summary) => callback(summary);

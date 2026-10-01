@@ -50,6 +50,7 @@ FormTracker never needs an inbound connection to your computer — it only reach
 5. **New Mailing** — filter your contacts, pick templates and the Gravity Forms connection, create the mailing.
 6. **Mailings** — review the email/paper split, then **Send**. Emails go out immediately; paper mailings generate a print-ready letter PDF per recipient (open it from the Tracking page) for you to print and mail. Any email that fails (a bad address, say) shows as **Send failed** on the Tracking page with the error; use **Fix & resend…** to correct the address, or clear it to send a paper letter instead.
 7. **Tracking** — see who has and hasn't responded. Online responses show up automatically after a sync. Use **Mark received…** to record an emailed-back PDF or a mailed-back paper form, with an optional attached scan. Once a response has been entered into the office's records software, tick its **Entered** box (the date is recorded); filter Status to **Responded — not yet entered** to see what's still waiting. Export to CSV/Excel any time.
+8. **Responses** — work through returned forms one at a time while entering them into the records software: the member ID and each answer (labeled with the form's own questions) have **Copy** buttons, and **Mark entered & next** ticks the response off and moves to the next one. Every online submission is kept; if someone submits again after their response was entered, it goes back into the "not yet entered" queue.
 
 ## Project layout
 

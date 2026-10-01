@@ -3,7 +3,7 @@
 function statusBadge(row) {
   if (row.status === "responded") {
     const via = row.response ? row.response.channel : "";
-    const label = { web: "Web form", email_pdf: "Emailed PDF", paper: "Mailed back" }[via] || "Responded";
+    const label = RESPONSE_CHANNEL_LABELS[via] || "Responded";
     return `<span class="badge badge-responded">${escapeHtml(label)}</span>`;
   }
   if (row.channel === "paper") {
@@ -31,13 +31,6 @@ function isSendFailed(row) {
 function needsEntering(row) {
   return row.status === "responded" && !row.enteredAt;
 }
-
-const MATCHED_BY_LABELS = {
-  token: "Personalized link",
-  memberId: "Member ID",
-  memberIdLookalike: "Member ID (look-alike characters, e.g. O for 0)",
-  manual: "Matched by hand",
-};
 
 window.Pages.tracking = {
   async render(container) {
@@ -168,7 +161,9 @@ window.Pages.tracking = {
     }
 
     function choiceLabel(choice) {
-      return `${choice.name || "(no name)"}${choice.memberId ? ` · ${choice.memberId}` : ""}${choice.mailingName ? ` — ${choice.mailingName}` : ""}`;
+      return `${choice.name || "(no name)"}${choice.memberId ? ` · ${choice.memberId}` : ""}${choice.mailingName ? ` — ${choice.mailingName}` : ""}${
+        choice.responded ? " (already responded)" : ""
+      }`;
     }
 
     function renderReview() {
@@ -366,6 +361,7 @@ window.Pages.tracking = {
           <td>
             ${isSendFailed(r) ? `<button class="btn" data-retry="${r.id}" type="button">Fix &amp; resend…</button>` : ""}
             ${canMarkMailed(r) ? `<button class="btn secondary" data-mailed="${r.id}" type="button">Mark as sent</button>` : ""}
+            ${r.status === "responded" ? `<button class="btn secondary" data-view-response="${r.id}" type="button">View response</button>` : ""}
             ${
               r.status !== "responded"
                 ? `<button class="btn secondary" data-mark="${r.id}" type="button">Mark received…</button>`
@@ -428,6 +424,13 @@ window.Pages.tracking = {
           }
           await window.api.setEntered([box.dataset.entered], box.checked);
           await reload();
+        })
+      );
+      qsa("[data-view-response]", body).forEach((btn) =>
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          window.__responsesSelect = btn.dataset.viewResponse;
+          navigate("responses");
         })
       );
       qsa("[data-open]", body).forEach((btn) => btn.addEventListener("click", (e) => { e.stopPropagation(); window.api.openPath(btn.dataset.open); }));

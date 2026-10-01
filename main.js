@@ -1,6 +1,6 @@
 "use strict";
 
-const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, clipboard } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const path = require("path");
 const fs = require("fs");
@@ -14,6 +14,7 @@ const { fillPdf } = require("./lib/pdfFill");
 const { generatePaperLetter } = require("./lib/paperMerge");
 const mailer = require("./lib/mailer");
 const gravityForms = require("./lib/gravityForms");
+const entryView = require("./lib/entryView");
 const { generateToken } = require("./lib/tokens");
 
 const SYNC_INTERVAL_MS = 5 * 60 * 1000;
@@ -654,6 +655,18 @@ ipcMain.handle("tracking:export-paper-addresses", async (event, recipientIds) =>
 // Gravity Forms sync
 // ---------------------------------------------------------------------------
 
+// The entry's page in the WordPress admin, for seeing it exactly as
+// Gravity Forms shows it.
+function gfEntryUrl(gf, entryId) {
+  return `${gf.siteUrl.replace(/\/+$/, "")}/wp-admin/admin.php?page=gf_entries&view=entry&id=${encodeURIComponent(gf.formId)}&lid=${encodeURIComponent(entryId)}`;
+}
+
+function cacheFormFields(gravityFormId, form) {
+  store.upsertMany("gfForms", "gravityFormId", [
+    { gravityFormId, fields: entryView.trimFormFields(form), fetchedAt: new Date().toISOString() },
+  ]);
+}
+
 function recordWebResponse(recipientId, { entry, entryId, submittedAt, matchedBy, memberIdEntered }) {
   store.insert("responses", {
     mailingRecipientId: recipientId,
@@ -667,7 +680,17 @@ function recordWebResponse(recipientId, { entry, entryId, submittedAt, matchedBy
     notes: "",
     recordedBy: matchedBy === "manual" ? "manual-review" : "gravity-forms-sync",
   });
-  store.update("mailingRecipients", recipientId, { status: "responded" });
+  // Every submission is kept, including a second one from someone who
+  // already responded (often a correction). If their response was already
+  // entered into the records software, this one hasn't been -- so it goes
+  // back in the "not yet entered" queue, remembering when the earlier one was.
+  const recipient = store.get("mailingRecipients", recipientId);
+  const patch = { status: "responded" };
+  if (recipient?.enteredAt) {
+    patch.enteredAt = null;
+    patch.previousEnteredAt = recipient.enteredAt;
+  }
+  store.update("mailingRecipients", recipientId, patch);
 }
 
 async function syncGravityForms() {
@@ -692,9 +715,11 @@ async function syncGravityForms() {
       summary.errors.push(`${gf.name}: ${err.message}`);
       continue;
     }
-    // Only used to show who an unmatched entry is from, so failing to load
-    // it shouldn't stop the sync.
+    // Used to show who an unmatched entry is from and, cached, to label
+    // answers on the Responses page -- so failing to load it shouldn't stop
+    // the sync.
     const form = await gravityForms.fetchForm(config).catch(() => null);
+    if (form) cacheFormFields(gf.id, form);
 
     const recorded = new Set(store.list("responses").filter((r) => r.gfEntryId).map((r) => r.gfEntryId));
     const candidates = recipients.map((recipient) => ({
@@ -708,13 +733,8 @@ async function syncGravityForms() {
       candidates
     );
 
-    const responded = new Set(recipients.filter((r) => r.status === "responded").map((r) => r.id));
     for (const match of matches) {
-      // Someone who already responded (by PDF, by paper, or in an earlier
-      // submission) submitting again isn't a new response.
-      if (responded.has(match.recipient.id)) continue;
       recordWebResponse(match.recipient.id, match);
-      responded.add(match.recipient.id);
       summary.matched++;
     }
 
@@ -762,12 +782,14 @@ function describeRecipient(recipient, contactById, mailingById) {
     name: contact?.name || "",
     memberId: contact?.externalId || "",
     mailingName: mailingById.get(recipient.mailingId)?.name || "",
+    responded: recipient.status === "responded",
   };
 }
 
 // Gravity Forms entries the sync couldn't match to anyone, for a person to
-// match by hand. `choices` lists, per form, everyone in its mailings still
-// waiting on a response.
+// match by hand. `choices` lists, per form, everyone in its mailings --
+// including people who already responded, since a repeat submission with a
+// mistyped ID is theirs too.
 ipcMain.handle("gf:review-list", async () => {
   const connections = new Map(store.list("gravityForms").map((g) => [g.id, g]));
   const items = store.list("gfUnmatched").filter((u) => !u.dismissed && connections.has(u.gravityFormId));
@@ -780,7 +802,7 @@ ipcMain.handle("gf:review-list", async () => {
   const choices = {};
   for (const gfId of new Set(items.map((u) => u.gravityFormId))) {
     choices[gfId] = recipients
-      .filter((r) => mailingById.get(r.mailingId)?.gravityFormId === gfId && r.status !== "responded")
+      .filter((r) => mailingById.get(r.mailingId)?.gravityFormId === gfId)
       .map((r) => describeRecipient(r, contactById, mailingById))
       .sort((a, b) => a.name.localeCompare(b.name));
   }
@@ -796,14 +818,14 @@ ipcMain.handle("gf:review-list", async () => {
           gravityFormId: u.gravityFormId,
           formName: gf.name,
           memberIdFieldSet: !!gf.memberIdFieldId,
-          entryUrl: `${gf.siteUrl.replace(/\/+$/, "")}/wp-admin/admin.php?page=gf_entries&view=entry&id=${encodeURIComponent(gf.formId)}&lid=${encodeURIComponent(u.gfEntryId)}`,
+          entryUrl: gfEntryUrl(gf, u.gfEntryId),
           submittedAt: u.submittedAt,
           memberIdEntered: u.memberIdEntered,
           name: u.name,
           email: u.email,
           suggestions: (u.suggestedRecipientIds || [])
             .map((id) => recipientById.get(id))
-            .filter((r) => r && r.status !== "responded")
+            .filter(Boolean)
             .map((r) => describeRecipient(r, contactById, mailingById)),
         };
       }),
@@ -815,9 +837,6 @@ ipcMain.handle("gf:review-assign", async (event, reviewId, recipientId) => {
   if (!item) throw new Error("This entry is no longer waiting for review -- try syncing again.");
   const recipient = store.get("mailingRecipients", recipientId);
   if (!recipient) throw new Error("Recipient not found.");
-  if (recipient.status === "responded") {
-    throw new Error("That member has already responded. If this entry is a duplicate, dismiss it instead.");
-  }
   recordWebResponse(recipient.id, {
     entry: item.entry,
     entryId: item.gfEntryId,
@@ -833,6 +852,105 @@ ipcMain.handle("gf:review-dismiss", async (event, reviewId) => {
   if (!store.update("gfUnmatched", reviewId, { dismissed: true })) throw new Error("Entry not found.");
   return true;
 });
+
+// ---------------------------------------------------------------------------
+// Responses (reading returned forms to enter them into the records software)
+// ---------------------------------------------------------------------------
+
+// The response shown for a recipient: their Gravity Forms submission if they
+// have one, since that's the one with answers to read; otherwise the latest.
+function pickResponse(responsesForRecipient) {
+  const newestFirst = [...responsesForRecipient].sort((a, b) => new Date(b.receivedAt) - new Date(a.receivedAt));
+  return newestFirst.find((r) => r.data && r.gfEntryId) || newestFirst[0] || null;
+}
+
+// A form's field definitions, from the copy the sync caches -- or fetched
+// now if this form hasn't been synced since that cache existed. null if
+// neither works; the Responses page then labels answers by field ID.
+async function loadFormFields(gf) {
+  const cached = store.list("gfForms").find((f) => f.gravityFormId === gf.id);
+  if (cached) return cached.fields;
+  try {
+    const form = await gravityForms.fetchForm({ ...gf, consumerSecret: decryptSecret(gf.consumerSecret) });
+    cacheFormFields(gf.id, form);
+    return entryView.trimFormFields(form);
+  } catch (err) {
+    console.error(`Couldn't load the form definition for "${gf.name}":`, err.message);
+    return null;
+  }
+}
+
+// Everyone who has responded, oldest response first -- the order to work
+// through them in.
+ipcMain.handle("responses:list", async () => {
+  const contactById = new Map(store.list("contacts").map((c) => [c.id, c]));
+  const mailingById = new Map(store.list("mailings").map((m) => [m.id, m]));
+  const responsesByRecipient = new Map();
+  for (const resp of store.list("responses")) {
+    if (!responsesByRecipient.has(resp.mailingRecipientId)) responsesByRecipient.set(resp.mailingRecipientId, []);
+    responsesByRecipient.get(resp.mailingRecipientId).push(resp);
+  }
+  return store
+    .list("mailingRecipients")
+    .filter((r) => r.status === "responded")
+    .map((r) => {
+      const response = pickResponse(responsesByRecipient.get(r.id) || []);
+      const contact = contactById.get(r.contactId);
+      return {
+        recipientId: r.id,
+        name: contact?.name || "",
+        memberId: contact?.externalId || "",
+        mailingId: r.mailingId,
+        mailingName: mailingById.get(r.mailingId)?.name || "",
+        channel: response?.channel || "",
+        receivedAt: response?.receivedAt || null,
+        enteredAt: r.enteredAt || null,
+      };
+    })
+    .sort((a, b) => new Date(a.receivedAt) - new Date(b.receivedAt));
+});
+
+// One recipient's response, ready to read. Shows their latest Gravity Forms
+// submission unless `responseId` picks another one of theirs.
+ipcMain.handle("responses:get", async (event, recipientId, responseId) => {
+  const recipient = store.get("mailingRecipients", recipientId);
+  if (!recipient) throw new Error("Recipient not found.");
+  const theirs = store.list("responses").filter((r) => r.mailingRecipientId === recipientId);
+  const response = theirs.find((r) => r.id === responseId) || pickResponse(theirs);
+  const submissions = theirs
+    .filter((r) => r.data && r.gfEntryId)
+    .sort((a, b) => new Date(b.receivedAt) - new Date(a.receivedAt))
+    .map((r) => ({ responseId: r.id, receivedAt: r.receivedAt }));
+  const contact = store.get("contacts", recipient.contactId);
+  const mailing = store.get("mailings", recipient.mailingId);
+  const gf = mailing?.gravityFormId ? store.get("gravityForms", mailing.gravityFormId) : null;
+
+  const entry = response?.data && response.gfEntryId ? response.data : null;
+  const fields = entry && gf ? await loadFormFields(gf) : null;
+  return {
+    recipientId,
+    name: contact?.name || "",
+    memberId: contact?.externalId || "",
+    mailingName: mailing?.name || "",
+    formName: gf?.name || "",
+    enteredAt: recipient.enteredAt || null,
+    previousEnteredAt: recipient.previousEnteredAt || null,
+    responseId: response?.id || null,
+    submissions,
+    channel: response?.channel || "",
+    receivedAt: response?.receivedAt || null,
+    matchedBy: response?.matchedBy || "",
+    memberIdEntered: response?.memberIdEntered || "",
+    notes: response?.notes || "",
+    attachmentPath: response?.attachmentPath || null,
+    entryUrl: entry && gf ? gfEntryUrl(gf, response.gfEntryId) : null,
+    hasEntry: !!entry,
+    labelsMissing: !!entry && !fields,
+    answers: entry ? entryView.describeEntry(entry, fields, { skipFieldIds: [gf?.tokenFieldId] }) : [],
+  };
+});
+
+ipcMain.handle("clipboard:write-text", async (event, text) => clipboard.writeText(String(text ?? "")));
 
 // ---------------------------------------------------------------------------
 // Misc
