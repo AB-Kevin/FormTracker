@@ -9,7 +9,7 @@ A desktop tool to send form requests to a mailing list — by email or paper mai
 3. Contacts with an email address get the email version; everyone else gets the paper version.
 4. Email and paper mailings use separate templates.
 5. The email contains a personalized link to a Gravity Forms web form (on your own website) plus a fillable PDF attachment, pre-filled where possible.
-6. Responses are tracked no matter how they come back: submitted online (auto-detected by the link's token or the member ID typed into the form), emailed back as a completed PDF, or mailed back on paper (both recorded manually with an optional scan/file attached).
+6. Responses are tracked no matter how they come back: submitted online (auto-detected by the link's token or the member ID typed into the form), emailed back as a completed PDF, or mailed back on paper (both recorded manually with the returned PDF or scan attached). Files can also be attached to a response afterwards — say, a PDF emailed in by someone who had already submitted online.
 7. The tracking table exports to CSV or Excel.
 8. The tracking page shows at a glance who has and hasn't replied.
 
@@ -49,8 +49,8 @@ FormTracker never needs an inbound connection to your computer — it only reach
 4. **Settings** — enter your SMTP details and send a test.
 5. **New Mailing** — filter your contacts, pick templates and the Gravity Forms connection, create the mailing.
 6. **Mailings** — review the email/paper split, then **Send**. Emails go out immediately; paper mailings generate a print-ready letter PDF per recipient (open it from the Tracking page) for you to print and mail. Any email that fails (a bad address, say) shows as **Send failed** on the Tracking page with the error; use **Fix & resend…** to correct the address, or clear it to send a paper letter instead.
-7. **Tracking** — see who has and hasn't responded. Online responses show up automatically after a sync. Use **Mark received…** to record an emailed-back PDF or a mailed-back paper form, with an optional attached scan. Once a response has been entered into the office's records software, tick its **Entered** box (the date is recorded); filter Status to **Responded — not yet entered** to see what's still waiting. Export to CSV/Excel any time.
-8. **Responses** — work through returned forms one at a time while entering them into the records software: the member ID and each answer (labeled with the form's own questions) have **Copy** buttons, and **Mark entered & next** ticks the response off and moves to the next one. Every online submission is kept; if someone submits again after their response was entered, it goes back into the "not yet entered" queue.
+7. **Tracking** — see who has and hasn't responded. Online responses show up automatically after a sync. Use **Mark received…** to record an emailed-back PDF or a mailed-back paper form, with the PDF or scan attached. For someone who has already responded (e.g. they submitted online and then emailed a PDF too), use **Attach file…** on their row; open or remove attached files by clicking the row. Once a response has been entered into the office's records software, tick its **Entered** box (the date is recorded); filter Status to **Responded — not yet entered** to see what's still waiting. Export to CSV/Excel any time.
+8. **Responses** — work through returned forms one at a time while entering them into the records software: the member ID and each answer (labeled with the form's own questions) have **Copy** buttons, and **Mark entered & next** ticks the response off and moves to the next one. Any attached PDFs or scans are listed above the answers, and **Attach file…** adds one there too. Every online submission is kept; if someone submits again after their response was entered, it goes back into the "not yet entered" queue.
 
 ## Project layout
 

@@ -254,10 +254,13 @@ tr:hover td { background: #fafbfd; }
 .responses-detail { flex: 1; min-width: 0; }
 .resp-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
 .resp-member-id { text-align: right; }
-.resp-member-id .label { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; font-weight: 600; }
+.resp-member-id .label, .resp-files .label { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; font-weight: 600; }
 .resp-member-id-value { font-size: 22px; font-weight: 700; letter-spacing: .04em; }
 .resp-typed-note { color: var(--warn); }
 .resp-actions { margin: 16px 0 8px; }
+.resp-files { margin: 12px 0 16px; }
+.resp-file { gap: 8px; padding: 3px 0; }
+.resp-file .hint { margin-top: 0; }
 .resp-answers { width: 100%; }
 .resp-answers th {
   width: 38%;

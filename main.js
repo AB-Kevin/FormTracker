@@ -451,29 +451,55 @@ ipcMain.handle("tracking:list", async (event, mailingId) => {
       contact: contacts.get(r.contactId) || null,
       mailingName: mailings.get(r.mailingId)?.name || "",
       response: latest || null,
+      attachments: recipientAttachments(responsesForRecipient),
     };
   });
 });
 
 ipcMain.handle("tracking:pick-attachment", async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: "Select the returned document (scan or PDF)",
-    properties: ["openFile"],
+    title: "Select the returned form (PDF or scan)",
+    filters: [
+      { name: "PDF or scan", extensions: ["pdf", "jpg", "jpeg", "png", "tif", "tiff"] },
+      { name: "All files", extensions: ["*"] },
+    ],
+    properties: ["openFile", "multiSelections"],
   });
   if (result.canceled || result.filePaths.length === 0) return null;
-  return result.filePaths[0];
+  return result.filePaths;
 });
 
-ipcMain.handle("tracking:mark-received", async (event, recipientId, { channel, notes, attachmentPath, recordedBy }) => {
+// Copies files into the data folder, so a response keeps them even if the
+// originals (say, in Downloads) are moved or deleted.
+function storeAttachments(filePaths) {
+  const addedAt = new Date().toISOString();
+  return (filePaths || []).map((src) => {
+    const dest = path.join(store.getDataDir(), "attachments", `${randomUUID()}${path.extname(src)}`);
+    fs.copyFileSync(src, dest);
+    return { path: dest, name: path.basename(src), addedAt };
+  });
+}
+
+// A response's files. Ones recorded before a response could hold several
+// have at most one, as `attachmentPath`, and no original file name.
+function responseAttachments(resp) {
+  if (resp.attachments) return resp.attachments;
+  if (!resp.attachmentPath) return [];
+  return [{ path: resp.attachmentPath, name: `Attached file${path.extname(resp.attachmentPath)}`, addedAt: resp.receivedAt }];
+}
+
+// Every file on any of a recipient's responses, oldest first -- a PDF
+// emailed after a web submission is on a different response than the one
+// whose answers are shown.
+function recipientAttachments(responsesForRecipient) {
+  return responsesForRecipient
+    .flatMap((resp) => responseAttachments(resp).map((file) => ({ ...file, responseId: resp.id })))
+    .sort((a, b) => new Date(a.addedAt) - new Date(b.addedAt));
+}
+
+ipcMain.handle("tracking:mark-received", async (event, recipientId, { channel, notes, attachmentPaths, recordedBy }) => {
   const recipient = store.get("mailingRecipients", recipientId);
   if (!recipient) throw new Error("Recipient not found.");
-
-  let storedAttachmentPath = null;
-  if (attachmentPath) {
-    const destName = `${randomUUID()}${path.extname(attachmentPath)}`;
-    storedAttachmentPath = path.join(store.getDataDir(), "attachments", destName);
-    fs.copyFileSync(attachmentPath, storedAttachmentPath);
-  }
 
   const response = store.insert("responses", {
     mailingRecipientId: recipientId,
@@ -481,7 +507,7 @@ ipcMain.handle("tracking:mark-received", async (event, recipientId, { channel, n
     receivedAt: new Date().toISOString(),
     data: null,
     gfEntryId: null,
-    attachmentPath: storedAttachmentPath,
+    attachments: storeAttachments(attachmentPaths),
     notes: notes || "",
     recordedBy: recordedBy || "",
   });
@@ -676,7 +702,7 @@ function recordWebResponse(recipientId, { entry, entryId, submittedAt, matchedBy
     gfEntryId: entryId,
     matchedBy,
     memberIdEntered: memberIdEntered || "",
-    attachmentPath: null,
+    attachments: [],
     notes: "",
     recordedBy: matchedBy === "manual" ? "manual-review" : "gravity-forms-sync",
   });
@@ -942,12 +968,33 @@ ipcMain.handle("responses:get", async (event, recipientId, responseId) => {
     matchedBy: response?.matchedBy || "",
     memberIdEntered: response?.memberIdEntered || "",
     notes: response?.notes || "",
-    attachmentPath: response?.attachmentPath || null,
+    attachments: recipientAttachments(theirs),
     entryUrl: entry && gf ? gfEntryUrl(gf, response.gfEntryId) : null,
     hasEntry: !!entry,
     labelsMissing: !!entry && !fields,
     answers: entry ? entryView.describeEntry(entry, fields, { skipFieldIds: [gf?.tokenFieldId] }) : [],
   };
+});
+
+// Adds files to a response that's already recorded -- e.g. someone who
+// submitted the web form and then emailed a PDF as well. Doesn't change
+// whether the response counts as entered.
+ipcMain.handle("responses:add-attachments", async (event, responseId, filePaths) => {
+  const response = store.get("responses", responseId);
+  if (!response) throw new Error("Response not found.");
+  const added = storeAttachments(filePaths);
+  store.update("responses", responseId, { attachments: [...responseAttachments(response), ...added], attachmentPath: null });
+  return { added: added.length };
+});
+
+// Takes a file off a response. Like tracking:remove-recipient, the stored
+// copy is left on disk.
+ipcMain.handle("responses:remove-attachment", async (event, responseId, filePath) => {
+  const response = store.get("responses", responseId);
+  if (!response) throw new Error("Response not found.");
+  const attachments = responseAttachments(response).filter((file) => file.path !== filePath);
+  store.update("responses", responseId, { attachments, attachmentPath: null });
+  return true;
 });
 
 ipcMain.handle("clipboard:write-text", async (event, text) => clipboard.writeText(String(text ?? "")));

@@ -299,9 +299,25 @@ window.Pages.tracking = {
               ${detailRow("Matched by", MATCHED_BY_LABELS[r.response?.matchedBy])}
               ${detailRow("Member ID entered", r.response?.memberIdEntered)}
               ${detailRow("Response notes", r.response?.notes)}
-              ${detailRow("Response attachment", r.response?.attachmentPath)}
               ${detailRow("Entered at", formatDate(r.enteredAt))}
             </table>
+            ${
+              r.attachments.length
+                ? `<h2>Attached files</h2>
+                  <table class="detail-table">${r.attachments
+                    .map(
+                      (file, i) => `
+                    <tr>
+                      <td>${escapeHtml(file.name)}<br/><span class="hint">attached ${escapeHtml(formatDate(file.addedAt))}</span></td>
+                      <td style="white-space:nowrap">
+                        <button class="btn secondary" data-open="${escapeHtml(file.path)}" type="button">Open</button>
+                        <button class="btn secondary" data-remove-file="${r.id}" data-file-index="${i}" type="button">Remove</button>
+                      </td>
+                    </tr>`
+                    )
+                    .join("")}</table>`
+                : ""
+            }
             <div class="row" style="margin-top:12px;gap:8px">
               ${r.mailedAt && r.status !== "responded" ? `<button class="btn secondary" data-unmark="${r.id}" type="button">Undo mark as sent</button>` : ""}
               <button class="btn secondary" data-remove="${r.id}" type="button">Remove from mailing</button>
@@ -365,10 +381,13 @@ window.Pages.tracking = {
             ${
               r.status !== "responded"
                 ? `<button class="btn secondary" data-mark="${r.id}" type="button">Mark received…</button>`
-                : r.response?.attachmentPath
-                ? `<button class="btn secondary" data-open="${escapeHtml(r.response.attachmentPath)}" type="button">Open file</button>`
+                : r.attachments.length === 1
+                ? `<button class="btn secondary" data-open="${escapeHtml(r.attachments[0].path)}" type="button">Open file</button>`
+                : r.attachments.length
+                ? `<button class="btn secondary" data-open-all="${r.id}" type="button">Open ${r.attachments.length} files</button>`
                 : ""
             }
+            ${r.response ? `<button class="btn secondary" data-attach="${r.id}" type="button">Attach file…</button>` : ""}
             ${r.generatedFilePath ? `<button class="btn secondary" data-open="${escapeHtml(r.generatedFilePath)}" type="button">Open letter</button>` : ""}
           </td>
         </tr>
@@ -434,6 +453,42 @@ window.Pages.tracking = {
         })
       );
       qsa("[data-open]", body).forEach((btn) => btn.addEventListener("click", (e) => { e.stopPropagation(); window.api.openPath(btn.dataset.open); }));
+      qsa("[data-open-all]", body).forEach((btn) =>
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const r = rows.find((row) => row.id === btn.dataset.openAll);
+          for (const file of r?.attachments || []) window.api.openPath(file.path);
+        })
+      );
+      // For someone who has already responded, e.g. a web form submission
+      // followed by an emailed PDF. Goes on their latest response.
+      qsa("[data-attach]", body).forEach((btn) =>
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          const r = rows.find((row) => row.id === btn.dataset.attach);
+          const picked = await window.api.pickAttachment();
+          if (!picked || !r?.response) return;
+          try {
+            const { added } = await window.api.addAttachments(r.response.id, picked);
+            toast(`Attached ${added} file${added === 1 ? "" : "s"} to ${r.contact?.name ? `${r.contact.name}'s` : "their"} response.`);
+          } catch (err) {
+            toast(`Couldn't attach: ${err.message}`, true);
+          }
+          await reload();
+        })
+      );
+      qsa("[data-remove-file]", body).forEach((btn) =>
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          const r = rows.find((row) => row.id === btn.dataset.removeFile);
+          const file = r?.attachments[Number(btn.dataset.fileIndex)];
+          if (!file) return;
+          if (!(await confirmAction(`Remove "${file.name}" from ${r.contact?.name ? `${r.contact.name}'s` : "this"} response?`, "Remove"))) return;
+          await window.api.removeAttachment(file.responseId, file.path);
+          toast("File removed.");
+          await reload();
+        })
+      );
       qsa(".tracking-row", body).forEach((row) => {
         row.addEventListener("click", (e) => {
           if (e.target.closest("button, label, input")) return;
@@ -455,7 +510,7 @@ window.Pages.tracking = {
       const cell = qs(`#mark-form-${recipientId} td`, container);
       const row = qs(`#mark-form-${recipientId}`, container);
       row.style.display = "table-row";
-      let attachmentPath = null;
+      let attachmentPaths = [];
       cell.innerHTML = `
         <div class="row" style="padding:8px 0">
           <div class="field">
@@ -478,8 +533,8 @@ window.Pages.tracking = {
       qs(".mark-attach", cell).addEventListener("click", async () => {
         const picked = await window.api.pickAttachment();
         if (!picked) return;
-        attachmentPath = picked;
-        qs(".mark-attach-name", cell).textContent = picked.split(/[\\/]/).pop();
+        attachmentPaths = picked;
+        qs(".mark-attach-name", cell).textContent = picked.map((p) => p.split(/[\\/]/).pop()).join(", ");
       });
       qs(".mark-cancel", cell).addEventListener("click", () => {
         row.style.display = "none";
@@ -487,7 +542,7 @@ window.Pages.tracking = {
       qs(".mark-save", cell).addEventListener("click", async () => {
         const channel = qs(".mark-channel", cell).value;
         const notes = qs(".mark-notes", cell).value;
-        await window.api.markReceived(recipientId, { channel, notes, attachmentPath });
+        await window.api.markReceived(recipientId, { channel, notes, attachmentPaths });
         toast("Marked as received.");
         await reload();
       });

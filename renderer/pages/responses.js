@@ -132,7 +132,9 @@ window.Pages.responses = {
       if (!d.hasEntry) {
         const how = d.channel === "paper" ? "by mail" : d.channel === "email_pdf" ? "by email as a PDF" : "outside the web form";
         return `
-          <p class="hint">This response came back ${how}, so there are no online answers to show${d.attachmentPath ? " — open the attached file" : ""}.</p>
+          <p class="hint">This response came back ${how}, so there are no online answers to show${
+            d.attachments.length ? ` — open the attached file${d.attachments.length === 1 ? "" : "s"} above` : ""
+          }.</p>
           ${d.notes ? `<table class="detail-table"><tr><th>Notes</th><td>${escapeHtml(d.notes)}</td></tr></table>` : ""}`;
       }
       if (!d.answers.length) return `<p class="hint">This submission has no answers filled in.</p>`;
@@ -155,6 +157,25 @@ window.Pages.responses = {
             )
             .join("")}
         </table>`;
+    }
+
+    function attachmentsHtml(d) {
+      if (!d.attachments.length) return "";
+      return `
+        <div class="resp-files">
+          <div class="label">Attached files</div>
+          ${d.attachments
+            .map(
+              (file, i) => `
+            <div class="row resp-file">
+              <span>${escapeHtml(file.name)}</span>
+              <span class="hint">attached ${escapeHtml(formatDate(file.addedAt))}</span>
+              <button class="btn secondary copy-btn" data-open-file="${i}" type="button">Open</button>
+              <button class="btn secondary copy-btn" data-remove-file="${i}" type="button">Remove</button>
+            </div>`
+            )
+            .join("")}
+        </div>`;
     }
 
     function renderDetail() {
@@ -231,8 +252,9 @@ window.Pages.responses = {
           <button class="btn secondary" id="resp-prev" type="button" ${prevId ? "" : "disabled"}>← Previous</button>
           <button class="btn secondary" id="resp-next" type="button" ${nextId ? "" : "disabled"}>Next →</button>
           ${d.entryUrl ? `<button class="btn secondary" id="resp-wp" type="button">View in WordPress</button>` : ""}
-          ${d.attachmentPath ? `<button class="btn secondary" id="resp-file" type="button">Open attached file</button>` : ""}
+          ${d.responseId ? `<button class="btn secondary" id="resp-attach" type="button">Attach file…</button>` : ""}
         </div>
+        ${attachmentsHtml(d)}
         ${answersHtml(d)}
       `;
 
@@ -248,7 +270,29 @@ window.Pages.responses = {
       qs("#resp-prev", pane).addEventListener("click", () => select(prevId));
       qs("#resp-next", pane).addEventListener("click", () => select(nextId));
       qs("#resp-wp", pane)?.addEventListener("click", () => window.api.openExternal(d.entryUrl).catch((err) => toast(err.message, true)));
-      qs("#resp-file", pane)?.addEventListener("click", () => window.api.openPath(d.attachmentPath));
+      qsa("[data-open-file]", pane).forEach((btn) =>
+        btn.addEventListener("click", () => window.api.openPath(d.attachments[Number(btn.dataset.openFile)].path))
+      );
+      qsa("[data-remove-file]", pane).forEach((btn) =>
+        btn.addEventListener("click", async () => {
+          const file = d.attachments[Number(btn.dataset.removeFile)];
+          if (!(await confirmAction(`Remove "${file.name}" from ${d.name ? `${d.name}'s` : "this"} response?`, "Remove"))) return;
+          await window.api.removeAttachment(file.responseId, file.path);
+          toast("File removed.");
+          await select(d.recipientId, d.responseId);
+        })
+      );
+      qs("#resp-attach", pane)?.addEventListener("click", async () => {
+        const picked = await window.api.pickAttachment();
+        if (!picked) return;
+        try {
+          const { added } = await window.api.addAttachments(d.responseId, picked);
+          toast(`Attached ${added} file${added === 1 ? "" : "s"}.`);
+        } catch (err) {
+          toast(`Couldn't attach: ${err.message}`, true);
+        }
+        await select(d.recipientId, d.responseId);
+      });
       qs("#resp-enter", pane)?.addEventListener("click", async () => {
         await window.api.setEntered([d.recipientId], true);
         toast(`${d.name || "Response"} marked entered.`);

@@ -49,6 +49,8 @@ contextBridge.exposeInMainWorld("api", {
 
   listResponses: () => ipcRenderer.invoke("responses:list"),
   getResponse: (recipientId, responseId) => ipcRenderer.invoke("responses:get", recipientId, responseId),
+  addAttachments: (responseId, filePaths) => ipcRenderer.invoke("responses:add-attachments", responseId, filePaths),
+  removeAttachment: (responseId, filePath) => ipcRenderer.invoke("responses:remove-attachment", responseId, filePath),
   copyText: (text) => ipcRenderer.invoke("clipboard:write-text", text),
 
   runSync: () => ipcRenderer.invoke("sync:run"),
