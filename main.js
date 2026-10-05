@@ -10,7 +10,7 @@ const store = require("./db/store");
 const csvImport = require("./lib/csvImport");
 const { filterContacts, listFilterableFields } = require("./lib/filter");
 const { renderTemplate, buildResponseLink, htmlToPlainText } = require("./lib/merge");
-const { fillPdf } = require("./lib/pdfFill");
+const { stampToken } = require("./lib/pdfStamp");
 const { generatePaperLetter } = require("./lib/paperMerge");
 const mailer = require("./lib/mailer");
 const gravityForms = require("./lib/gravityForms");
@@ -322,8 +322,8 @@ async function deliverToRecipient(recipient, contact, { emailTemplate, paperTemp
       const attachments = [];
       if (emailTemplate.pdfPath) {
         const templateBytes = fs.readFileSync(emailTemplate.pdfPath);
-        const filled = await fillPdf(templateBytes, contact, recipient.responseToken);
-        attachments.push({ filename: `form-${recipient.responseToken}.pdf`, content: Buffer.from(filled) });
+        const stamped = await stampToken(templateBytes, recipient.responseToken);
+        attachments.push({ filename: `form-${recipient.responseToken}.pdf`, content: Buffer.from(stamped) });
       }
       await mailer.sendMail(smtpConfig, {
         to: contact.email,
@@ -418,8 +418,8 @@ ipcMain.handle("mailings:send-test", async (event, mailingId) => {
   const attachments = [];
   if (emailTemplate.pdfPath) {
     const templateBytes = fs.readFileSync(emailTemplate.pdfPath);
-    const filled = await fillPdf(templateBytes, contact, token);
-    attachments.push({ filename: `form-${token}.pdf`, content: Buffer.from(filled) });
+    const stamped = await stampToken(templateBytes, token);
+    attachments.push({ filename: `form-${token}.pdf`, content: Buffer.from(stamped) });
   }
 
   await mailer.sendMail(smtpConfig, {

@@ -8,7 +8,7 @@ A desktop tool to send form requests to a mailing list — by email or paper mai
 2. Build a mailing by filtering the list on any field (e.g. "Committee = Finance").
 3. Contacts with an email address get the email version; everyone else gets the paper version.
 4. Email and paper mailings use separate templates.
-5. The email contains a personalized link to a Gravity Forms web form (on your own website) plus a fillable PDF attachment, pre-filled where possible.
+5. The email contains a personalized link to a Gravity Forms web form (on your own website) plus a blank fillable PDF attachment (stamped with the recipient's reference code in the footer).
 6. Responses are tracked no matter how they come back: submitted online (auto-detected by the link's token or the member ID typed into the form), emailed back as a completed PDF, or mailed back on paper (both recorded manually with the returned PDF or scan attached). Files can also be attached to a response afterwards — say, a PDF emailed in by someone who had already submitted online.
 7. The tracking table exports to CSV or Excel.
 8. The tracking page shows at a glance who has and hasn't replied.
