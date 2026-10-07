@@ -1,6 +1,6 @@
 "use strict";
 
-const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, clipboard } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, clipboard, nativeTheme } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const path = require("path");
 const fs = require("fs");
@@ -45,10 +45,33 @@ function decryptSecret(stored) {
   }
 }
 
+// ---- theme ----
+// The Settings page's Appearance choice, applied as nativeTheme.themeSource:
+// the renderer's prefers-color-scheme follows it (styles.css keys its dark
+// palette off that), and so do the Windows title bar and native controls.
+// "system" follows Windows' own light/dark setting, live.
+const THEMES = ["system", "light", "dark"];
+
+function savedTheme() {
+  const theme = store.getSettings().theme;
+  return THEMES.includes(theme) ? theme : "system";
+}
+
+// styles.css's --surface-page for each theme, painted before the page loads
+// so a dark-mode window doesn't flash white on open.
+function windowBackground() {
+  return nativeTheme.shouldUseDarkColors ? "#1b1c1e" : "#ffffff";
+}
+
+nativeTheme.on("updated", () => {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setBackgroundColor(windowBackground());
+});
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 860,
+    backgroundColor: windowBackground(),
     icon: path.join(__dirname, "build", "icon.png"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -69,6 +92,7 @@ if (process.env.FORMTRACKER_DATA_DIR) {
 
 app.whenReady().then(() => {
   store.init(app.getPath("userData"));
+  nativeTheme.themeSource = savedTheme();
   createWindow();
   setInterval(() => {
     runSync()
@@ -201,7 +225,16 @@ ipcMain.handle("settings:get", async () => {
     fromEmail: settings.fromEmail || "",
     hasSmtpPassword: !!settings.smtpPassword,
     testEmail: settings.testEmail || "",
+    theme: savedTheme(),
   };
+});
+
+// Applies right away, unlike the SMTP form's Save button.
+ipcMain.handle("settings:set-theme", async (event, theme) => {
+  if (!THEMES.includes(theme)) throw new Error("Unknown theme.");
+  store.updateSettings({ theme });
+  nativeTheme.themeSource = theme;
+  return theme;
 });
 
 ipcMain.handle("settings:save-smtp", async (event, data) => {
@@ -307,36 +340,41 @@ function loadSendContext(mailing) {
   };
 }
 
+// Builds one recipient's email from the mailing's email template as it is
+// now. The PDF is stamped fresh from the template's file on every call --
+// nothing from an earlier send is kept or reused -- so a send, a test, and a
+// resend all attach the same thing.
+async function composeEmail(contact, token, { emailTemplate, gravityForm }) {
+  if (!emailTemplate) throw new Error("No email template selected for this mailing.");
+  const link = gravityForm ? buildResponseLink(gravityForm, token) : "";
+  const extraContext = { form_link: link };
+  const subject = renderTemplate(emailTemplate.subject, contact, extraContext);
+  const bodyHtml = renderTemplate(emailTemplate.body, contact, extraContext);
+  const attachments = [];
+  if (emailTemplate.pdfPath) {
+    const templateBytes = fs.readFileSync(emailTemplate.pdfPath);
+    const stamped = await stampToken(templateBytes, token);
+    attachments.push({ filename: `form-${token}.pdf`, content: Buffer.from(stamped) });
+  }
+  return { subject, html: bodyHtml, text: htmlToPlainText(bodyHtml), attachments };
+}
+
 // Emails one recipient, or generates their paper letter, and records the
 // outcome on the recipient. Returns "sent" or "generated". A failure is saved
 // as the recipient's `error` (the Tracking page shows it as "Send failed",
 // with a way to fix the address and retry) and then rethrown.
-async function deliverToRecipient(recipient, contact, { emailTemplate, paperTemplate, gravityForm, smtpConfig }) {
-  const link = gravityForm ? buildResponseLink(gravityForm, recipient.responseToken) : "";
-  const extraContext = { form_link: link };
+async function deliverToRecipient(recipient, contact, context) {
+  const { paperTemplate, gravityForm, smtpConfig } = context;
   try {
     if (recipient.channel === "email") {
-      if (!emailTemplate) throw new Error("No email template selected for this mailing.");
-      const subject = renderTemplate(emailTemplate.subject, contact, extraContext);
-      const bodyHtml = renderTemplate(emailTemplate.body, contact, extraContext);
-      const attachments = [];
-      if (emailTemplate.pdfPath) {
-        const templateBytes = fs.readFileSync(emailTemplate.pdfPath);
-        const stamped = await stampToken(templateBytes, recipient.responseToken);
-        attachments.push({ filename: `form-${recipient.responseToken}.pdf`, content: Buffer.from(stamped) });
-      }
-      await mailer.sendMail(smtpConfig, {
-        to: contact.email,
-        subject,
-        html: bodyHtml,
-        text: htmlToPlainText(bodyHtml),
-        attachments,
-      });
+      const message = await composeEmail(contact, recipient.responseToken, context);
+      await mailer.sendMail(smtpConfig, { to: contact.email, ...message });
       store.update("mailingRecipients", recipient.id, { status: "sent", sentAt: new Date().toISOString(), error: null });
       return "sent";
     }
     if (!paperTemplate) throw new Error("No paper template selected for this mailing.");
-    const body = renderTemplate(paperTemplate.body, contact, extraContext);
+    const link = gravityForm ? buildResponseLink(gravityForm, recipient.responseToken) : "";
+    const body = renderTemplate(paperTemplate.body, contact, { form_link: link });
     const letterBytes = await generatePaperLetter(body, contact, recipient.responseToken);
     const destPath = path.join(store.getDataDir(), "generated-letters", `${recipient.responseToken}.pdf`);
     fs.writeFileSync(destPath, letterBytes);
@@ -410,25 +448,9 @@ ipcMain.handle("mailings:send-test", async (event, mailingId) => {
     extra: {},
   };
   const token = sampleRecipient ? sampleRecipient.responseToken : generateToken();
-  const link = gravityForm ? buildResponseLink(gravityForm, token) : "";
-  const extraContext = { form_link: link };
 
-  const subject = `[TEST] ${renderTemplate(emailTemplate.subject, contact, extraContext)}`;
-  const bodyHtml = renderTemplate(emailTemplate.body, contact, extraContext);
-  const attachments = [];
-  if (emailTemplate.pdfPath) {
-    const templateBytes = fs.readFileSync(emailTemplate.pdfPath);
-    const stamped = await stampToken(templateBytes, token);
-    attachments.push({ filename: `form-${token}.pdf`, content: Buffer.from(stamped) });
-  }
-
-  await mailer.sendMail(smtpConfig, {
-    to: testEmail,
-    subject,
-    html: bodyHtml,
-    text: htmlToPlainText(bodyHtml),
-    attachments,
-  });
+  const message = await composeEmail(contact, token, { emailTemplate, gravityForm });
+  await mailer.sendMail(smtpConfig, { to: testEmail, ...message, subject: `[TEST] ${message.subject}` });
   return { to: testEmail };
 });
 
@@ -595,6 +617,43 @@ ipcMain.handle("tracking:retry-send", async (event, recipientId, email) => {
   return { outcome };
 });
 
+// Emails the form again to recipients who were already sent it but haven't
+// responded -- it went to spam, say, or the first copy had a problem. Uses
+// the mailing's email template and PDF as they are now, with the recipient's
+// same response token, so their link and Ref code still match them. sentAt
+// keeps the original send; resentAt records the latest resend. Takes an array
+// like tracking:mark-mailed; paper, unsent, and responded recipients are
+// skipped. A failure is only reported back, not saved -- the recipient was
+// still sent the first time.
+ipcMain.handle("tracking:resend", async (event, recipientIds) => {
+  const ids = new Set(recipientIds || []);
+  const recipients = store
+    .list("mailingRecipients")
+    .filter((r) => ids.has(r.id) && r.channel === "email" && r.status === "sent");
+  const contactById = new Map(store.list("contacts").map((c) => [c.id, c]));
+  const mailingById = new Map(store.list("mailings").map((m) => [m.id, m]));
+  const contextByMailing = new Map();
+
+  const results = { sent: 0, errors: [] };
+  for (const recipient of recipients) {
+    const contact = contactById.get(recipient.contactId);
+    try {
+      const mailing = mailingById.get(recipient.mailingId);
+      if (!mailing || !contact) throw new Error("This recipient's mailing or contact no longer exists.");
+      if (!contact.email) throw new Error("This contact no longer has an email address.");
+      if (!contextByMailing.has(mailing.id)) contextByMailing.set(mailing.id, loadSendContext(mailing));
+      const context = contextByMailing.get(mailing.id);
+      const message = await composeEmail(contact, recipient.responseToken, context);
+      await mailer.sendMail(context.smtpConfig, { to: contact.email, ...message });
+      store.update("mailingRecipients", recipient.id, { resentAt: new Date().toISOString() });
+      results.sent++;
+    } catch (err) {
+      results.errors.push({ recipientId: recipient.id, name: contact?.name || "", error: err.message });
+    }
+  }
+  return results;
+});
+
 // Both exports take the recipient IDs currently shown on the Tracking page, so
 // what's exported always matches the page's mailing/status/channel/search
 // filters rather than re-deriving the filter here.
@@ -618,6 +677,7 @@ ipcMain.handle("tracking:export", async (event, recipientIds, format) => {
       Channel: r.channel,
       Status: r.status,
       "Sent At": r.sentAt || "",
+      "Resent At": r.resentAt || "",
       "Mailed At": r.mailedAt || "",
       "Responded Via": latest ? latest.channel : "",
       "Responded At": latest ? latest.receivedAt : "",

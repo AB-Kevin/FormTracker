@@ -32,6 +32,11 @@ window.Pages.mailings = {
       };
     }
 
+    // Emailed, but no reply yet -- who "Resend…" goes to.
+    function resendableIds(mailingId) {
+      return allRecipients.filter((r) => r.mailingId === mailingId && r.channel === "email" && r.status === "sent").map((r) => r.id);
+    }
+
     function formCellHtml(mailing) {
       if (!mailing.gravityFormId) return `<span class="hint">None</span>`;
       const gf = gravityForms.find((g) => g.id === mailing.gravityFormId);
@@ -84,6 +89,7 @@ window.Pages.mailings = {
             <button class="btn" data-send="${m.id}" ${m.status === "sent" ? "disabled" : ""}>${
             m.status === "sent" ? "Sent" : "Send"
           }</button>
+            ${m.status === "sent" && resendableIds(m.id).length ? `<button class="btn secondary" data-resend="${m.id}" type="button">Resend…</button>` : ""}
             <button class="btn secondary" data-test="${m.id}" type="button">Test</button>
             <button class="btn secondary" data-view="${m.id}">View tracking</button>
             <button class="btn secondary" data-filters="${m.id}" type="button">Filters</button>
@@ -111,6 +117,32 @@ window.Pages.mailings = {
             btn.disabled = false;
             btn.textContent = "Send";
           }
+        })
+      );
+      qsa("[data-resend]", body).forEach((btn) =>
+        btn.addEventListener("click", async () => {
+          const mailing = mailings.find((m) => m.id === btn.dataset.resend);
+          const ids = resendableIds(btn.dataset.resend);
+          const count = `${ids.length} email recipient${ids.length === 1 ? "" : "s"}`;
+          const message =
+            `Email "${mailing?.name || "this mailing"}" again to the ${count} who haven't responded yet?\n\n` +
+            "They'll get the email template and form PDF as they are now, with the same link and reference code as before. " +
+            "Use Test first to see exactly what they'll get.";
+          if (!(await confirmAction(message, "Resend"))) return;
+          btn.disabled = true;
+          btn.textContent = "Sending…";
+          try {
+            const { sent, errors } = await window.api.resend(ids);
+            toast(`Resent to ${sent} recipient${sent === 1 ? "" : "s"}.`);
+            if (errors.length) {
+              const names = errors.map((e) => e.name || "(no name)");
+              const shown = names.length > 5 ? `${names.slice(0, 5).join(", ")} and ${names.length - 5} more` : names.join(", ");
+              toast(`Couldn't resend to ${errors.length}: ${shown} — ${errors[0].error}`, true);
+            }
+          } catch (err) {
+            toast(`Resend failed: ${err.message}`, true);
+          }
+          navigate("mailings");
         })
       );
       qsa("[data-test]", body).forEach((btn) =>

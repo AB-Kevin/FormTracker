@@ -26,6 +26,11 @@ function isSendFailed(row) {
   return row.status === "pending" && !!row.error;
 }
 
+// Emailed, but no reply yet -- the form can be sent to them again.
+function canResend(row) {
+  return row.channel === "email" && row.status === "sent";
+}
+
 // Responded, but the response hasn't been entered into the office's records
 // software yet.
 function needsEntering(row) {
@@ -291,6 +296,7 @@ window.Pages.tracking = {
               ${detailRow("Status", r.status)}
               ${isSendFailed(r) ? detailRow("Send error", r.error) : ""}
               ${detailRow(r.channel === "paper" ? "Letter generated at" : "Sent at", formatDate(r.sentAt))}
+              ${detailRow("Last resent at", formatDate(r.resentAt))}
               ${detailRow("Mailed at", formatDate(r.mailedAt))}
               ${detailRow("Generated file", r.generatedFilePath)}
               ${detailRow("Response token", r.responseToken)}
@@ -363,7 +369,9 @@ window.Pages.tracking = {
           <td>${escapeHtml(r.contact?.name || "")}<br/><span class="hint">${escapeHtml(r.contact?.email || "")}</span></td>
           <td><span class="badge ${r.channel === "email" ? "badge-email" : "badge-paper"}">${r.channel}</span></td>
           <td>${escapeHtml(r.mailingName)}</td>
-          <td>${formatDate(r.channel === "paper" ? r.mailedAt : r.sentAt)}</td>
+          <td>${formatDate(r.channel === "paper" ? r.mailedAt : r.sentAt)}${
+            r.resentAt ? `<br/><span class="hint">resent ${escapeHtml(formatDate(r.resentAt))}</span>` : ""
+          }</td>
           <td>${statusBadge(r)}${
             isSendFailed(r) ? `<br/><span class="hint send-error" title="${escapeHtml(r.error)}">${escapeHtml(r.error)}</span>` : ""
           }</td>
@@ -376,6 +384,7 @@ window.Pages.tracking = {
           }</td>
           <td>
             ${isSendFailed(r) ? `<button class="btn" data-retry="${r.id}" type="button">Fix &amp; resend…</button>` : ""}
+            ${canResend(r) ? `<button class="btn secondary" data-resend="${r.id}" type="button">Resend</button>` : ""}
             ${canMarkMailed(r) ? `<button class="btn secondary" data-mailed="${r.id}" type="button">Mark as sent</button>` : ""}
             ${r.status === "responded" ? `<button class="btn secondary" data-view-response="${r.id}" type="button">View response</button>` : ""}
             ${
@@ -400,6 +409,20 @@ window.Pages.tracking = {
 
       qsa("[data-mark]", body).forEach((btn) => btn.addEventListener("click", (e) => { e.stopPropagation(); openMarkForm(btn.dataset.mark); }));
       qsa("[data-retry]", body).forEach((btn) => btn.addEventListener("click", (e) => { e.stopPropagation(); openRetryForm(btn.dataset.retry); }));
+      qsa("[data-resend]", body).forEach((btn) =>
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          const r = rows.find((row) => row.id === btn.dataset.resend);
+          const who = r?.contact?.name || "this recipient";
+          if (!(await confirmAction(`Email the form to ${who} again at ${r?.contact?.email || "their address"}?`, "Resend"))) return;
+          btn.disabled = true;
+          btn.textContent = "Sending…";
+          const { sent, errors } = await window.api.resend([btn.dataset.resend]).catch((err) => ({ sent: 0, errors: [{ error: err.message }] }));
+          if (sent) toast(`Form resent to ${who}.`);
+          else toast(`Resend failed: ${errors[0]?.error || `${who} can't be resent to.`}`, true);
+          await reload();
+        })
+      );
       qsa("[data-mailed]", body).forEach((btn) =>
         btn.addEventListener("click", async (e) => {
           e.stopPropagation();

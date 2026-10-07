@@ -73,6 +73,19 @@ window.Pages.settings = {
       </div>
 
       <div class="panel">
+        <h2 style="margin-top:0">Appearance</h2>
+        <div class="field">
+          <label>Theme</label>
+          <select id="theme-select" style="align-self:flex-start">
+            <option value="system" ${settings.theme === "system" ? "selected" : ""}>Match Windows</option>
+            <option value="light" ${settings.theme === "light" ? "selected" : ""}>Light</option>
+            <option value="dark" ${settings.theme === "dark" ? "selected" : ""}>Dark</option>
+          </select>
+          <p class="hint">Applies right away. Match Windows follows Windows' own light/dark setting.</p>
+        </div>
+      </div>
+
+      <div class="panel">
         <h2 style="margin-top:0">Updates</h2>
         <p class="hint">You're running version ${escapeHtml(version)}.</p>
         <div id="update-action-area"></div>
@@ -108,6 +121,10 @@ window.Pages.settings = {
     });
 
     qs("#open-data-dir-btn", container).addEventListener("click", () => window.api.openPath(dataDir));
+
+    qs("#theme-select", container).addEventListener("change", (e) =>
+      window.api.setTheme(e.target.value).catch((err) => toast(`Couldn't change the theme: ${err.message}`, true))
+    );
 
     // main.js owns autoUpdater and only reports status over "update:status" --
     // this just mirrors that status into the panel. window.__updateStatus

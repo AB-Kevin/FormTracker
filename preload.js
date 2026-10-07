@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld("api", {
   getSettings: () => ipcRenderer.invoke("settings:get"),
   saveSmtpSettings: (data) => ipcRenderer.invoke("settings:save-smtp", data),
   testSmtp: () => ipcRenderer.invoke("settings:test-smtp"),
+  setTheme: (theme) => ipcRenderer.invoke("settings:set-theme", theme),
 
   listMailings: () => ipcRenderer.invoke("mailings:list"),
   createMailing: (data) => ipcRenderer.invoke("mailings:create", data),
@@ -44,6 +45,7 @@ contextBridge.exposeInMainWorld("api", {
   setEntered: (recipientIds, entered) => ipcRenderer.invoke("tracking:set-entered", recipientIds, entered),
   removeRecipient: (recipientId) => ipcRenderer.invoke("tracking:remove-recipient", recipientId),
   retrySend: (recipientId, email) => ipcRenderer.invoke("tracking:retry-send", recipientId, email),
+  resend: (recipientIds) => ipcRenderer.invoke("tracking:resend", recipientIds),
   exportTracking: (recipientIds, format) => ipcRenderer.invoke("tracking:export", recipientIds, format),
   exportPaperAddresses: (recipientIds) => ipcRenderer.invoke("tracking:export-paper-addresses", recipientIds),
 
