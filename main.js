@@ -560,6 +560,31 @@ ipcMain.handle("tracking:mark-mailed", async (event, recipientIds) => {
   return { updated };
 });
 
+// Records sending a paper recipient another copy because they haven't
+// responded -- the paper counterpart of tracking:resend. mailedAt keeps the
+// first mailing; resentAt records the latest re-mailing, the same field an
+// email resend uses, so the Tracking page and export show both alike. Only
+// recipients already marked mailed and not yet responded are updated.
+ipcMain.handle("tracking:mark-remailed", async (event, recipientIds) => {
+  const ids = new Set(recipientIds || []);
+  const now = new Date().toISOString();
+  const updated = store.updateWhere("mailingRecipients", (recipient) => {
+    if (!ids.has(recipient.id)) return null;
+    if (recipient.channel !== "paper" || recipient.status === "responded" || !recipient.mailedAt) return null;
+    return { resentAt: now };
+  });
+  return { updated };
+});
+
+// Undoes tracking:mark-remailed. Only one re-mail date is kept, so this clears
+// it rather than restoring an earlier one.
+ipcMain.handle("tracking:unmark-remailed", async (event, recipientId) => {
+  const recipient = store.get("mailingRecipients", recipientId);
+  if (!recipient) throw new Error("Recipient not found.");
+  if (recipient.channel !== "paper") throw new Error("Only paper recipients are marked re-mailed.");
+  return store.update("mailingRecipients", recipientId, { resentAt: null });
+});
+
 // Records (or clears) when a response was entered into the office's own
 // records software -- a manual step done after each response comes in.
 // Only applies to recipients who have responded. Takes an array like
@@ -577,10 +602,12 @@ ipcMain.handle("tracking:set-entered", async (event, recipientIds, entered) => {
 
 // Undoes tracking:mark-mailed. A paper recipient with no generated letter can
 // only have reached "sent" by being marked mailed, so it goes back to pending.
+// A re-mail date goes too, since it can't have been re-mailed if it was never
+// mailed.
 ipcMain.handle("tracking:unmark-mailed", async (event, recipientId) => {
   const recipient = store.get("mailingRecipients", recipientId);
   if (!recipient) throw new Error("Recipient not found.");
-  const patch = { mailedAt: null };
+  const patch = { mailedAt: null, resentAt: null };
   if (recipient.status === "sent" && !recipient.generatedFilePath) {
     patch.status = "pending";
     patch.sentAt = null;

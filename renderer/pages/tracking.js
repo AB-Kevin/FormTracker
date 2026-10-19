@@ -20,6 +20,11 @@ function canMarkMailed(row) {
   return row.channel === "paper" && row.status !== "responded" && !row.mailedAt;
 }
 
+// Mailed, but no reply yet -- another copy can be mailed and recorded.
+function canMarkRemailed(row) {
+  return row.channel === "paper" && row.status !== "responded" && !!row.mailedAt;
+}
+
 // Sending to this recipient was attempted and failed (bad address, rejected
 // by the mail server, ...) -- they're still waiting to be sent.
 function isSendFailed(row) {
@@ -108,6 +113,7 @@ window.Pages.tracking = {
           <button class="btn secondary" id="export-xlsx-btn" type="button" style="align-self:flex-end;margin-bottom:12px">Export Excel</button>
           <button class="btn secondary" id="export-paper-btn" type="button" style="align-self:flex-end;margin-bottom:12px">Export Paper Addresses (CSV)</button>
           <button class="btn" id="mark-batch-btn" type="button" style="align-self:flex-end;margin-bottom:12px;display:none"></button>
+          <button class="btn secondary" id="remail-batch-btn" type="button" style="align-self:flex-end;margin-bottom:12px;display:none"></button>
         </div>
         <table>
           <thead><tr><th>Name</th><th>Channel</th><th>Mailing</th><th>Sent</th><th>Status</th><th title="Entered into our records software">Entered</th><th></th></tr></thead>
@@ -296,8 +302,9 @@ window.Pages.tracking = {
               ${detailRow("Status", r.status)}
               ${isSendFailed(r) ? detailRow("Send error", r.error) : ""}
               ${detailRow(r.channel === "paper" ? "Letter generated at" : "Sent at", formatDate(r.sentAt))}
-              ${detailRow("Last resent at", formatDate(r.resentAt))}
+              ${r.channel === "paper" ? "" : detailRow("Last resent at", formatDate(r.resentAt))}
               ${detailRow("Mailed at", formatDate(r.mailedAt))}
+              ${r.channel === "paper" ? detailRow("Last re-mailed at", formatDate(r.resentAt)) : ""}
               ${detailRow("Generated file", r.generatedFilePath)}
               ${detailRow("Response token", r.responseToken)}
               ${detailRow("Responded via", r.response?.channel)}
@@ -326,6 +333,7 @@ window.Pages.tracking = {
             }
             <div class="row" style="margin-top:12px;gap:8px">
               ${r.mailedAt && r.status !== "responded" ? `<button class="btn secondary" data-unmark="${r.id}" type="button">Undo mark as sent</button>` : ""}
+              ${canMarkRemailed(r) && r.resentAt ? `<button class="btn secondary" data-unremail="${r.id}" type="button">Undo re-mailed</button>` : ""}
               <button class="btn secondary" data-remove="${r.id}" type="button">Remove from mailing</button>
             </div>
           </div>
@@ -370,7 +378,9 @@ window.Pages.tracking = {
           <td><span class="badge ${r.channel === "email" ? "badge-email" : "badge-paper"}">${r.channel}</span></td>
           <td>${escapeHtml(r.mailingName)}</td>
           <td>${formatDate(r.channel === "paper" ? r.mailedAt : r.sentAt)}${
-            r.resentAt ? `<br/><span class="hint">resent ${escapeHtml(formatDate(r.resentAt))}</span>` : ""
+            r.resentAt
+              ? `<br/><span class="hint">${r.channel === "paper" ? "re-mailed" : "resent"} ${escapeHtml(formatDate(r.resentAt))}</span>`
+              : ""
           }</td>
           <td>${statusBadge(r)}${
             isSendFailed(r) ? `<br/><span class="hint send-error" title="${escapeHtml(r.error)}">${escapeHtml(r.error)}</span>` : ""
@@ -386,6 +396,7 @@ window.Pages.tracking = {
             ${isSendFailed(r) ? `<button class="btn" data-retry="${r.id}" type="button">Fix &amp; resend…</button>` : ""}
             ${canResend(r) ? `<button class="btn secondary" data-resend="${r.id}" type="button">Resend</button>` : ""}
             ${canMarkMailed(r) ? `<button class="btn secondary" data-mailed="${r.id}" type="button">Mark as sent</button>` : ""}
+            ${canMarkRemailed(r) ? `<button class="btn secondary" data-remailed="${r.id}" type="button">Mark re-mailed</button>` : ""}
             ${r.status === "responded" ? `<button class="btn secondary" data-view-response="${r.id}" type="button">View response</button>` : ""}
             ${
               r.status !== "responded"
@@ -437,6 +448,23 @@ window.Pages.tracking = {
           e.stopPropagation();
           await window.api.unmarkMailed(btn.dataset.unmark);
           toast("No longer marked as sent.");
+          await reload();
+        })
+      );
+      qsa("[data-remailed]", body).forEach((btn) =>
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          btn.disabled = true;
+          await window.api.markRemailed([btn.dataset.remailed]);
+          toast("Marked as re-mailed today.");
+          await reload();
+        })
+      );
+      qsa("[data-unremail]", body).forEach((btn) =>
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          await window.api.unmarkRemailed(btn.dataset.unremail);
+          toast("Re-mailed date cleared.");
           await reload();
         })
       );
@@ -527,6 +555,13 @@ window.Pages.tracking = {
       const markable = list.filter(canMarkMailed).length;
       batchBtn.style.display = markable ? "" : "none";
       batchBtn.textContent = `Mark ${markable} shown paper recipient${markable === 1 ? "" : "s"} as sent`;
+
+      // Same idea for second copies: filter Status = Not yet responded and
+      // Channel = Paper, reprint those letters, then mark the set re-mailed.
+      const remailBtn = qs("#remail-batch-btn", container);
+      const remailable = list.filter(canMarkRemailed).length;
+      remailBtn.style.display = remailable ? "" : "none";
+      remailBtn.textContent = `Mark ${remailable} shown paper recipient${remailable === 1 ? "" : "s"} as re-mailed`;
     }
 
     function openMarkForm(recipientId) {
@@ -653,6 +688,15 @@ window.Pages.tracking = {
       if (!(await confirmAction(`Mark ${ids.length} paper recipient${ids.length === 1 ? "" : "s"} as sent (mailed today)?`, "Mark as sent"))) return;
       const { updated } = await window.api.markMailed(ids);
       toast(`Marked ${updated} recipient${updated === 1 ? "" : "s"} as sent.`);
+      await reload();
+    });
+    qs("#remail-batch-btn", container).addEventListener("click", async () => {
+      const ids = filteredRows().filter(canMarkRemailed).map((r) => r.id);
+      if (!ids.length) return;
+      const count = `${ids.length} paper recipient${ids.length === 1 ? "" : "s"}`;
+      if (!(await confirmAction(`Mark ${count} as re-mailed today? Only do this once the second copies are in the mail.`, "Mark re-mailed"))) return;
+      const { updated } = await window.api.markRemailed(ids);
+      toast(`Marked ${updated} recipient${updated === 1 ? "" : "s"} as re-mailed.`);
       await reload();
     });
     // Exports cover exactly the rows currently shown (all filters + search).
