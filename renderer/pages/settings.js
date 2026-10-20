@@ -1,14 +1,21 @@
 "use strict";
 
+function describeDataMode(state) {
+  if (state.mode === "editing") return "You're editing this data. Anyone else who opens it now gets a read-only view.";
+  if (state.mode === "unavailable") return "This folder can't be reached right now.";
+  if (state.holder?.active) return `Read-only: ${state.holder.user} on ${state.holder.machine} is editing.`;
+  return "Read-only: nobody is editing now. Use Start editing at the top of the window to make changes.";
+}
+
 window.Pages.settings = {
   async render(container) {
     const settings = await window.api.getSettings();
-    const dataDir = await window.api.getDataDir();
+    const dataState = await window.api.getDataState();
     const version = await window.api.getVersion();
 
     container.innerHTML = `
       <h1>Settings</h1>
-      <p class="subtitle">Emails are sent through your own email account via SMTP.</p>
+      <p class="subtitle">Emails are sent through your own email account via SMTP. These settings are saved on this computer only.</p>
 
       <div class="panel">
         <h2 style="margin-top:0">SMTP</h2>
@@ -65,11 +72,21 @@ window.Pages.settings = {
 
       <div class="panel">
         <h2 style="margin-top:0">Data location</h2>
-        <p class="hint">Imported contacts, templates, generated PDFs, and tracking data are stored here:</p>
+        <p class="hint">Imported contacts, templates, generated PDFs, and tracking data are stored here${dataState.isDefault ? " (this computer's own folder)" : ""}:</p>
         <div class="row">
-          <code>${escapeHtml(dataDir)}</code>
+          <code>${escapeHtml(dataState.dataDir)}</code>
           <button class="btn secondary" id="open-data-dir-btn" type="button">Open folder</button>
+          <button class="btn secondary" id="change-data-dir-btn" type="button">Change folder…</button>
+          ${dataState.isDefault ? "" : `<button class="btn secondary" id="default-data-dir-btn" type="button">Use this computer's folder</button>`}
         </div>
+        <p class="hint">${escapeHtml(describeDataMode(dataState))}</p>
+        <p class="hint">
+          To share the data with your team, copy everything in this folder except settings.json into a OneDrive or
+          SharePoint folder everyone syncs, and choose that folder here — then choose it on each other computer too.
+          Only one person can edit at a time; anyone else with FormTracker open sees it read-only.
+          SMTP settings, the test email address, the theme, and Gravity Forms consumer secrets aren't shared, so each person
+          enters their own here and on the Gravity Forms page.
+        </p>
       </div>
 
       <div class="panel">
@@ -120,7 +137,25 @@ window.Pages.settings = {
       btn.textContent = "Test connection";
     });
 
-    qs("#open-data-dir-btn", container).addEventListener("click", () => window.api.openPath(dataDir));
+    qs("#open-data-dir-btn", container).addEventListener("click", () => window.api.openPath(dataState.dataDir));
+
+    qs("#change-data-dir-btn", container).addEventListener("click", async () => {
+      const next = await window.api.chooseDataFolder();
+      if (!next) return;
+      toast(`Now using ${next.dataDir}.`);
+      navigate("settings");
+    });
+
+    qs("#default-data-dir-btn", container)?.addEventListener("click", async () => {
+      const ok = await confirmAction(
+        "Switch back to this computer's own data folder? It has whatever was there before the shared folder was chosen — changes made in the shared folder aren't copied back.",
+        "Switch"
+      );
+      if (!ok) return;
+      const next = await window.api.useDefaultDataFolder();
+      toast(`Now using ${next.dataDir}.`);
+      navigate("settings");
+    });
 
     qs("#theme-select", container).addEventListener("change", (e) =>
       window.api.setTheme(e.target.value).catch((err) => toast(`Couldn't change the theme: ${err.message}`, true))

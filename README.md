@@ -29,6 +29,8 @@ npm start
 
 All data (contacts, templates, generated PDFs/letters, and tracking records) is stored locally under the app's data folder — see **Settings → Data location** inside the app.
 
+To share it with a team, copy the data folder's contents (all but `settings.json`) into a OneDrive/SharePoint folder everyone syncs and choose that folder under **Settings → Data location** on each computer. Only one computer edits at a time: the first to open FormTracker takes a lock file (`formtracker.lock`) in the folder, and everyone else gets a read-only view with a **Take over editing** button. SMTP settings, the theme, and Gravity Forms consumer secrets stay on each computer.
+
 ## One-time Gravity Forms setup (for the online response channel)
 
 FormTracker doesn't host the web form itself — it uses a form already on your WordPress site, so the emailed link works immediately for real recipients without deploying anything. To wire it up:

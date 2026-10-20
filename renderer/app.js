@@ -57,7 +57,9 @@ function toast(message, isError = false) {
   const container = qs("#toast");
   const item = document.createElement("div");
   item.className = "toast-item" + (isError ? " toast-error" : "");
-  item.textContent = message;
+  // A main-process error arrives as "Error invoking remote method 'x':
+  // Error: <message>" -- only the message means anything to the user.
+  item.textContent = String(message).replace(/Error invoking remote method '[^']*': (?:\w*Error: )?/g, "");
   container.appendChild(item);
   setTimeout(() => item.classList.add("visible"), 10);
   setTimeout(() => {
@@ -74,6 +76,7 @@ function confirmAction(message, okLabel) {
 
 async function navigate(pageName) {
   qsa(".nav-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.page === pageName));
+  document.dispatchEvent(new CustomEvent("formtracker:navigate", { detail: pageName }));
   const content = qs("#content");
   content.innerHTML = '<div class="loading">Loading…</div>';
   const page = window.Pages[pageName];

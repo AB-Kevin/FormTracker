@@ -7,6 +7,7 @@ const fs = require("fs");
 const { randomUUID } = require("crypto");
 
 const store = require("./db/store");
+const dataLock = require("./lib/dataLock");
 const csvImport = require("./lib/csvImport");
 const { filterContacts, listFilterableFields } = require("./lib/filter");
 const { renderTemplate, buildResponseLink, htmlToPlainText } = require("./lib/merge");
@@ -43,6 +44,20 @@ function decryptSecret(stored) {
   } catch {
     return "";
   }
+}
+
+// A Gravity Forms connection lives in the (possibly shared) data folder, but
+// its consumer secret is encrypted with this Windows account's key, which no
+// other computer can decrypt -- so each computer keeps its own copy in its
+// local settings. A secret saved on the connection itself, from before the
+// data folder could be shared, still works on the computer that saved it.
+function gfConsumerSecret(gf) {
+  return decryptSecret(store.getSettings().gfSecrets?.[gf.id]) || decryptSecret(gf.consumerSecret);
+}
+
+function saveGfConsumerSecret(gfId, plainText) {
+  const gfSecrets = store.getSettings().gfSecrets || {};
+  store.updateSettings({ gfSecrets: { ...gfSecrets, [gfId]: encryptSecret(plainText) } });
 }
 
 // ---- theme ----
@@ -90,13 +105,27 @@ if (process.env.FORMTRACKER_DATA_DIR) {
   app.setPath("userData", process.env.FORMTRACKER_DATA_DIR);
 }
 
+function sendToWindow(channel, payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
+}
+
 app.whenReady().then(() => {
   store.init(app.getPath("userData"));
+  // A backstop for the per-handler check in handleEdit below: nothing
+  // reaches the data folder's files unless this computer holds its lock.
+  store.setWriteGuard(() => {
+    if (!dataLock.isEditing()) dataLock.assertEditing();
+  });
+  dataLock.onStateChange(() => sendToWindow("data:state", dataFolderState()));
+  dataLock.onExternalChange(() => sendToWindow("data:changed"));
+  dataLock.start(store.getDataDir());
   nativeTheme.themeSource = savedTheme();
   createWindow();
+  // Only the editor syncs: recording responses is a change like any other.
   setInterval(() => {
+    if (!dataLock.isEditing()) return;
     runSync()
-      .then((summary) => mainWindow?.webContents.send("sync:completed", summary))
+      .then((summary) => sendToWindow("sync:completed", summary))
       .catch((err) => console.error("Background sync failed:", err));
   }, SYNC_INTERVAL_MS);
 
@@ -108,6 +137,19 @@ app.whenReady().then(() => {
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
+
+app.on("will-quit", () => dataLock.stop());
+
+// Handlers that change the data folder. Only the computer holding its lock
+// may run them (see lib/dataLock.js); anyone else gets an error saying who's
+// editing. Checked up front so nothing half-happens -- an email sent, say,
+// with no record of it saved.
+function handleEdit(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    dataLock.assertEditing();
+    return handler(event, ...args);
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Import
@@ -128,7 +170,7 @@ ipcMain.handle("import:preview", async (event, filePath) => {
   return { headers, sampleRows: rows.slice(0, 20), totalRows: rows.length };
 });
 
-ipcMain.handle("import:commit", async (event, filePath, mapping, batchName) => {
+handleEdit("import:commit", async (event, filePath, mapping, batchName) => {
   const { rows } = csvImport.parseFile(filePath);
   const contacts = csvImport.buildContacts(rows, mapping, batchName || path.basename(filePath));
   const { inserted, updated } = store.upsertMany("contacts", "externalId", contacts);
@@ -160,13 +202,13 @@ ipcMain.handle("contacts:preview-filter", async (event, rules) => {
 
 ipcMain.handle("templates:list", async () => store.list("templates"));
 
-ipcMain.handle("templates:create", async (event, data) => store.insert("templates", data));
+handleEdit("templates:create", async (event, data) => store.insert("templates", data));
 
-ipcMain.handle("templates:update", async (event, id, patch) => store.update("templates", id, patch));
+handleEdit("templates:update", async (event, id, patch) => store.update("templates", id, patch));
 
-ipcMain.handle("templates:delete", async (event, id) => store.remove("templates", id));
+handleEdit("templates:delete", async (event, id) => store.remove("templates", id));
 
-ipcMain.handle("templates:pick-pdf", async () => {
+handleEdit("templates:pick-pdf", async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "Select the fillable PDF template",
     filters: [{ name: "PDF", extensions: ["pdf"] }],
@@ -175,9 +217,9 @@ ipcMain.handle("templates:pick-pdf", async () => {
   if (result.canceled || result.filePaths.length === 0) return null;
   const srcPath = result.filePaths[0];
   const destName = `${randomUUID()}.pdf`;
-  const destPath = path.join(store.getDataDir(), "pdf-templates", destName);
+  const destPath = path.join(store.dataSubfolder("pdf-templates"), destName);
   fs.copyFileSync(srcPath, destPath);
-  return { storedPath: destPath, originalName: path.basename(srcPath) };
+  return { storedPath: store.toStoredPath(destPath), originalName: path.basename(srcPath) };
 });
 
 // ---------------------------------------------------------------------------
@@ -185,30 +227,28 @@ ipcMain.handle("templates:pick-pdf", async () => {
 // ---------------------------------------------------------------------------
 
 ipcMain.handle("gf:list", async () =>
-  store.list("gravityForms").map((gf) => ({ ...gf, consumerSecret: undefined, hasSecret: !!gf.consumerSecret }))
+  store.list("gravityForms").map((gf) => ({ ...gf, consumerSecret: undefined, hasSecret: !!gfConsumerSecret(gf) }))
 );
 
 ipcMain.handle("gf:test-connection", async (event, siteUrl, consumerKey, consumerSecret) =>
   gravityForms.testConnection(siteUrl, consumerKey, consumerSecret)
 );
 
-ipcMain.handle("gf:create", async (event, data) => {
-  const row = store.insert("gravityForms", { ...data, consumerSecret: encryptSecret(data.consumerSecret) });
-  return { ...row, consumerSecret: undefined };
+handleEdit("gf:create", async (event, data) => {
+  const { consumerSecret, ...rest } = data;
+  const row = store.insert("gravityForms", rest);
+  saveGfConsumerSecret(row.id, consumerSecret);
+  return row;
 });
 
-ipcMain.handle("gf:update", async (event, id, patch) => {
-  const next = { ...patch };
-  if (typeof next.consumerSecret === "string" && next.consumerSecret) {
-    next.consumerSecret = encryptSecret(next.consumerSecret);
-  } else {
-    delete next.consumerSecret;
-  }
-  const row = store.update("gravityForms", id, next);
+handleEdit("gf:update", async (event, id, patch) => {
+  const { consumerSecret, ...rest } = patch;
+  const row = store.update("gravityForms", id, rest);
+  if (row && typeof consumerSecret === "string" && consumerSecret) saveGfConsumerSecret(id, consumerSecret);
   return row && { ...row, consumerSecret: undefined };
 });
 
-ipcMain.handle("gf:delete", async (event, id) => store.remove("gravityForms", id));
+handleEdit("gf:delete", async (event, id) => store.remove("gravityForms", id));
 
 // ---------------------------------------------------------------------------
 // Settings (SMTP)
@@ -276,7 +316,7 @@ ipcMain.handle("settings:test-smtp", async () => {
 
 ipcMain.handle("mailings:list", async () => store.list("mailings"));
 
-ipcMain.handle("mailings:create", async (event, { name, templateId, paperTemplateId, gravityFormId, filterRules }) => {
+handleEdit("mailings:create", async (event, { name, templateId, paperTemplateId, gravityFormId, filterRules }) => {
   const contacts = filterContacts(store.list("contacts"), filterRules);
   const mailing = store.insert("mailings", {
     name,
@@ -322,7 +362,7 @@ ipcMain.handle("mailings:get", async (event, id) => {
   return { ...mailing, recipients: hydrateRecipients(id) };
 });
 
-ipcMain.handle("mailings:delete", async (event, id) => {
+handleEdit("mailings:delete", async (event, id) => {
   const mailing = store.get("mailings", id);
   if (!mailing) return false;
   if (mailing.status === "sent") throw new Error("This mailing has already been sent and can't be deleted.");
@@ -352,7 +392,7 @@ async function composeEmail(contact, token, { emailTemplate, gravityForm }) {
   const bodyHtml = renderTemplate(emailTemplate.body, contact, extraContext);
   const attachments = [];
   if (emailTemplate.pdfPath) {
-    const templateBytes = fs.readFileSync(emailTemplate.pdfPath);
+    const templateBytes = fs.readFileSync(store.resolvePath(emailTemplate.pdfPath));
     const stamped = await stampToken(templateBytes, token);
     attachments.push({ filename: `form-${token}.pdf`, content: Buffer.from(stamped) });
   }
@@ -376,12 +416,12 @@ async function deliverToRecipient(recipient, contact, context) {
     const link = gravityForm ? buildResponseLink(gravityForm, recipient.responseToken) : "";
     const body = renderTemplate(paperTemplate.body, contact, { form_link: link });
     const letterBytes = await generatePaperLetter(body, contact, recipient.responseToken);
-    const destPath = path.join(store.getDataDir(), "generated-letters", `${recipient.responseToken}.pdf`);
+    const destPath = path.join(store.dataSubfolder("generated-letters"), `${recipient.responseToken}.pdf`);
     fs.writeFileSync(destPath, letterBytes);
     store.update("mailingRecipients", recipient.id, {
       status: "sent",
       sentAt: new Date().toISOString(),
-      generatedFilePath: destPath,
+      generatedFilePath: store.toStoredPath(destPath),
       error: null,
     });
     return "generated";
@@ -391,7 +431,7 @@ async function deliverToRecipient(recipient, contact, context) {
   }
 }
 
-ipcMain.handle("mailings:send", async (event, mailingId) => {
+handleEdit("mailings:send", async (event, mailingId) => {
   const mailing = store.get("mailings", mailingId);
   if (!mailing) throw new Error("Mailing not found.");
   const context = loadSendContext(mailing);
@@ -404,6 +444,9 @@ ipcMain.handle("mailings:send", async (event, mailingId) => {
   for (const recipient of recipients) {
     const contact = contactById.get(recipient.contactId);
     if (!contact) continue;
+    // Stops the whole send if someone has taken over editing meanwhile --
+    // otherwise each email would go out with no record of it saved.
+    dataLock.assertEditing();
     try {
       const outcome = await deliverToRecipient(recipient, contact, context);
       results[outcome]++;
@@ -496,9 +539,9 @@ ipcMain.handle("tracking:pick-attachment", async () => {
 function storeAttachments(filePaths) {
   const addedAt = new Date().toISOString();
   return (filePaths || []).map((src) => {
-    const dest = path.join(store.getDataDir(), "attachments", `${randomUUID()}${path.extname(src)}`);
+    const dest = path.join(store.dataSubfolder("attachments"), `${randomUUID()}${path.extname(src)}`);
     fs.copyFileSync(src, dest);
-    return { path: dest, name: path.basename(src), addedAt };
+    return { path: store.toStoredPath(dest), name: path.basename(src), addedAt };
   });
 }
 
@@ -519,7 +562,7 @@ function recipientAttachments(responsesForRecipient) {
     .sort((a, b) => new Date(a.addedAt) - new Date(b.addedAt));
 }
 
-ipcMain.handle("tracking:mark-received", async (event, recipientId, { channel, notes, attachmentPaths, recordedBy }) => {
+handleEdit("tracking:mark-received", async (event, recipientId, { channel, notes, attachmentPaths, recordedBy }) => {
   const recipient = store.get("mailingRecipients", recipientId);
   if (!recipient) throw new Error("Recipient not found.");
 
@@ -544,7 +587,7 @@ ipcMain.handle("tracking:mark-received", async (event, recipientId, { channel, n
 // A still-pending recipient (e.g. mailed from the exported address list
 // without generating letters) is moved to "sent" too, so a later send of the
 // mailing doesn't treat it as still needing to go out.
-ipcMain.handle("tracking:mark-mailed", async (event, recipientIds) => {
+handleEdit("tracking:mark-mailed", async (event, recipientIds) => {
   const ids = new Set(recipientIds || []);
   const now = new Date().toISOString();
   const updated = store.updateWhere("mailingRecipients", (recipient) => {
@@ -565,7 +608,7 @@ ipcMain.handle("tracking:mark-mailed", async (event, recipientIds) => {
 // first mailing; resentAt records the latest re-mailing, the same field an
 // email resend uses, so the Tracking page and export show both alike. Only
 // recipients already marked mailed and not yet responded are updated.
-ipcMain.handle("tracking:mark-remailed", async (event, recipientIds) => {
+handleEdit("tracking:mark-remailed", async (event, recipientIds) => {
   const ids = new Set(recipientIds || []);
   const now = new Date().toISOString();
   const updated = store.updateWhere("mailingRecipients", (recipient) => {
@@ -578,7 +621,7 @@ ipcMain.handle("tracking:mark-remailed", async (event, recipientIds) => {
 
 // Undoes tracking:mark-remailed. Only one re-mail date is kept, so this clears
 // it rather than restoring an earlier one.
-ipcMain.handle("tracking:unmark-remailed", async (event, recipientId) => {
+handleEdit("tracking:unmark-remailed", async (event, recipientId) => {
   const recipient = store.get("mailingRecipients", recipientId);
   if (!recipient) throw new Error("Recipient not found.");
   if (recipient.channel !== "paper") throw new Error("Only paper recipients are marked re-mailed.");
@@ -589,7 +632,7 @@ ipcMain.handle("tracking:unmark-remailed", async (event, recipientId) => {
 // records software -- a manual step done after each response comes in.
 // Only applies to recipients who have responded. Takes an array like
 // tracking:mark-mailed.
-ipcMain.handle("tracking:set-entered", async (event, recipientIds, entered) => {
+handleEdit("tracking:set-entered", async (event, recipientIds, entered) => {
   const ids = new Set(recipientIds || []);
   const now = new Date().toISOString();
   const updated = store.updateWhere("mailingRecipients", (recipient) => {
@@ -604,7 +647,7 @@ ipcMain.handle("tracking:set-entered", async (event, recipientIds, entered) => {
 // only have reached "sent" by being marked mailed, so it goes back to pending.
 // A re-mail date goes too, since it can't have been re-mailed if it was never
 // mailed.
-ipcMain.handle("tracking:unmark-mailed", async (event, recipientId) => {
+handleEdit("tracking:unmark-mailed", async (event, recipientId) => {
   const recipient = store.get("mailingRecipients", recipientId);
   if (!recipient) throw new Error("Recipient not found.");
   const patch = { mailedAt: null, resentAt: null };
@@ -617,7 +660,7 @@ ipcMain.handle("tracking:unmark-mailed", async (event, recipientId) => {
 
 // Drops one person from a mailing, along with any responses recorded for
 // them. Stored attachment files are left on disk rather than deleted.
-ipcMain.handle("tracking:remove-recipient", async (event, recipientId) => {
+handleEdit("tracking:remove-recipient", async (event, recipientId) => {
   const recipient = store.get("mailingRecipients", recipientId);
   if (!recipient) throw new Error("Recipient not found.");
   store.removeWhere("responses", (resp) => resp.mailingRecipientId === recipientId);
@@ -628,7 +671,7 @@ ipcMain.handle("tracking:remove-recipient", async (event, recipientId) => {
 // Retries one recipient whose send failed, after saving a corrected email
 // address on their contact. A blank address switches them to a paper letter
 // instead -- e.g. a contact imported with "N/A" in the email column.
-ipcMain.handle("tracking:retry-send", async (event, recipientId, email) => {
+handleEdit("tracking:retry-send", async (event, recipientId, email) => {
   const recipient = store.get("mailingRecipients", recipientId);
   if (!recipient) throw new Error("Recipient not found.");
   if (recipient.status !== "pending") throw new Error("This recipient has already been sent.");
@@ -652,7 +695,7 @@ ipcMain.handle("tracking:retry-send", async (event, recipientId, email) => {
 // like tracking:mark-mailed; paper, unsent, and responded recipients are
 // skipped. A failure is only reported back, not saved -- the recipient was
 // still sent the first time.
-ipcMain.handle("tracking:resend", async (event, recipientIds) => {
+handleEdit("tracking:resend", async (event, recipientIds) => {
   const ids = new Set(recipientIds || []);
   const recipients = store
     .list("mailingRecipients")
@@ -664,6 +707,7 @@ ipcMain.handle("tracking:resend", async (event, recipientIds) => {
   const results = { sent: 0, errors: [] };
   for (const recipient of recipients) {
     const contact = contactById.get(recipient.contactId);
+    dataLock.assertEditing(); // as in mailings:send
     try {
       const mailing = mailingById.get(recipient.mailingId);
       if (!mailing || !contact) throw new Error("This recipient's mailing or contact no longer exists.");
@@ -774,7 +818,9 @@ function gfEntryUrl(gf, entryId) {
   return `${gf.siteUrl.replace(/\/+$/, "")}/wp-admin/admin.php?page=gf_entries&view=entry&id=${encodeURIComponent(gf.formId)}&lid=${encodeURIComponent(entryId)}`;
 }
 
+// Skipped in the read-only view; the editor's next sync caches it.
 function cacheFormFields(gravityFormId, form) {
+  if (!dataLock.isEditing()) return;
   store.upsertMany("gfForms", "gravityFormId", [
     { gravityFormId, fields: entryView.trimFormFields(form), fetchedAt: new Date().toISOString() },
   ]);
@@ -818,7 +864,11 @@ async function syncGravityForms() {
     const recipients = store.list("mailingRecipients").filter((r) => linkedMailings.has(r.mailingId));
     if (recipients.length === 0) continue;
 
-    const config = { ...gf, consumerSecret: decryptSecret(gf.consumerSecret) };
+    const config = { ...gf, consumerSecret: gfConsumerSecret(gf) };
+    if (!config.consumerSecret) {
+      summary.errors.push(`${gf.name}: no consumer secret saved on this computer -- enter it on the Gravity Forms page`);
+      continue;
+    }
     const since = new Date(Math.min(...[...linkedMailings.values()].map((m) => new Date(m.createdAt).getTime())));
     let entries;
     try {
@@ -886,7 +936,7 @@ function runSync() {
   return syncInFlight;
 }
 
-ipcMain.handle("sync:run", async () => runSync());
+handleEdit("sync:run", async () => runSync());
 
 function describeRecipient(recipient, contactById, mailingById) {
   const contact = contactById.get(recipient.contactId);
@@ -945,7 +995,7 @@ ipcMain.handle("gf:review-list", async () => {
   };
 });
 
-ipcMain.handle("gf:review-assign", async (event, reviewId, recipientId) => {
+handleEdit("gf:review-assign", async (event, reviewId, recipientId) => {
   const item = store.get("gfUnmatched", reviewId);
   if (!item) throw new Error("This entry is no longer waiting for review -- try syncing again.");
   const recipient = store.get("mailingRecipients", recipientId);
@@ -961,7 +1011,7 @@ ipcMain.handle("gf:review-assign", async (event, reviewId, recipientId) => {
   return true;
 });
 
-ipcMain.handle("gf:review-dismiss", async (event, reviewId) => {
+handleEdit("gf:review-dismiss", async (event, reviewId) => {
   if (!store.update("gfUnmatched", reviewId, { dismissed: true })) throw new Error("Entry not found.");
   return true;
 });
@@ -984,7 +1034,7 @@ async function loadFormFields(gf) {
   const cached = store.list("gfForms").find((f) => f.gravityFormId === gf.id);
   if (cached) return cached.fields;
   try {
-    const form = await gravityForms.fetchForm({ ...gf, consumerSecret: decryptSecret(gf.consumerSecret) });
+    const form = await gravityForms.fetchForm({ ...gf, consumerSecret: gfConsumerSecret(gf) });
     cacheFormFields(gf.id, form);
     return entryView.trimFormFields(form);
   } catch (err) {
@@ -1066,7 +1116,7 @@ ipcMain.handle("responses:get", async (event, recipientId, responseId) => {
 // Adds files to a response that's already recorded -- e.g. someone who
 // submitted the web form and then emailed a PDF as well. Doesn't change
 // whether the response counts as entered.
-ipcMain.handle("responses:add-attachments", async (event, responseId, filePaths) => {
+handleEdit("responses:add-attachments", async (event, responseId, filePaths) => {
   const response = store.get("responses", responseId);
   if (!response) throw new Error("Response not found.");
   const added = storeAttachments(filePaths);
@@ -1076,7 +1126,7 @@ ipcMain.handle("responses:add-attachments", async (event, responseId, filePaths)
 
 // Takes a file off a response. Like tracking:remove-recipient, the stored
 // copy is left on disk.
-ipcMain.handle("responses:remove-attachment", async (event, responseId, filePath) => {
+handleEdit("responses:remove-attachment", async (event, responseId, filePath) => {
   const response = store.get("responses", responseId);
   if (!response) throw new Error("Response not found.");
   const attachments = responseAttachments(response).filter((file) => file.path !== filePath);
@@ -1108,14 +1158,82 @@ ipcMain.handle("dialog:confirm", async (event, message, okLabel) => {
   return response === 0;
 });
 
-ipcMain.handle("shell:open-path", async (event, filePath) => shell.openPath(filePath));
-ipcMain.handle("shell:show-in-folder", async (event, filePath) => shell.showItemInFolder(filePath));
+// Paths of files in the data folder come from the renderer as stored, so
+// they're resolved here -- see store.resolvePath.
+ipcMain.handle("shell:open-path", async (event, filePath) => shell.openPath(store.resolvePath(filePath)));
+ipcMain.handle("shell:show-in-folder", async (event, filePath) => shell.showItemInFolder(store.resolvePath(filePath)));
 ipcMain.handle("shell:open-external", async (event, url) => {
   if (!/^https:\/\//i.test(url)) throw new Error("Only https:// links can be opened externally.");
   return shell.openExternal(url);
 });
-ipcMain.handle("app:get-data-dir", async () => store.getDataDir());
 ipcMain.handle("app:get-version", async () => app.getVersion());
+
+// ---------------------------------------------------------------------------
+// Data folder (Settings > Data location) and its edit lock
+// ---------------------------------------------------------------------------
+
+function dataFolderState() {
+  return { ...dataLock.getState(), isDefault: store.getDataDir() === store.getDefaultDataDir() };
+}
+
+ipcMain.handle("data:get-state", async () => dataFolderState());
+
+ipcMain.handle("data:start-editing", async () => {
+  dataLock.acquire(false);
+  return dataFolderState();
+});
+
+ipcMain.handle("data:take-over", async () => {
+  dataLock.acquire(true);
+  return dataFolderState();
+});
+
+function hasFormTrackerData(dir) {
+  return ["contacts.json", "mailings.json"].some((file) => fs.existsSync(path.join(dir, file)));
+}
+
+// Gives up the current folder's lock and starts on another one -- waiting
+// out a sync in progress first, so it doesn't finish in the new folder.
+async function switchDataDir(dir) {
+  await syncInFlight?.catch(() => {});
+  dataLock.stop();
+  const isDefault = path.resolve(dir) === path.resolve(store.getDefaultDataDir());
+  store.updateSettings({ dataDir: isDefault ? null : dir });
+  store.setDataDir(isDefault ? store.getDefaultDataDir() : dir);
+  dataLock.start(store.getDataDir());
+  return dataFolderState();
+}
+
+ipcMain.handle("data:choose-folder", async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "Choose FormTracker's data folder",
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  let dir = result.filePaths[0];
+  // Picking the folder the data folder was copied into, rather than the
+  // data folder itself, is an easy slip.
+  const nested = path.join(dir, "formtracker-data");
+  if (!hasFormTrackerData(dir) && hasFormTrackerData(nested)) dir = nested;
+  if (path.resolve(dir) === path.resolve(store.getDataDir())) return null;
+
+  if (!hasFormTrackerData(dir)) {
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: "warning",
+      buttons: ["Use this folder", "Cancel"],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+      message: "This folder doesn't have any FormTracker data in it.",
+      detail: `${dir}\n\nFormTracker will start out empty there. To bring your data along, close this, copy the contents of the current data folder into it, and choose it again.`,
+    });
+    if (mainWindow) mainWindow.webContents.focus();
+    if (response !== 0) return null;
+  }
+  return switchDataDir(dir);
+});
+
+ipcMain.handle("data:use-default-folder", async () => switchDataDir(store.getDefaultDataDir()));
 
 // ---------------------------------------------------------------------------
 // Auto-update

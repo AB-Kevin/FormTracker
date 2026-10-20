@@ -68,8 +68,23 @@ contextBridge.exposeInMainWorld("api", {
   openPath: (filePath) => ipcRenderer.invoke("shell:open-path", filePath),
   showInFolder: (filePath) => ipcRenderer.invoke("shell:show-in-folder", filePath),
   openExternal: (url) => ipcRenderer.invoke("shell:open-external", url),
-  getDataDir: () => ipcRenderer.invoke("app:get-data-dir"),
   getVersion: () => ipcRenderer.invoke("app:get-version"),
+
+  getDataState: () => ipcRenderer.invoke("data:get-state"),
+  startEditing: () => ipcRenderer.invoke("data:start-editing"),
+  takeOverEditing: () => ipcRenderer.invoke("data:take-over"),
+  chooseDataFolder: () => ipcRenderer.invoke("data:choose-folder"),
+  useDefaultDataFolder: () => ipcRenderer.invoke("data:use-default-folder"),
+  onDataState: (callback) => {
+    const listener = (event, state) => callback(state);
+    ipcRenderer.on("data:state", listener);
+    return () => ipcRenderer.removeListener("data:state", listener);
+  },
+  onDataChanged: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("data:changed", listener);
+    return () => ipcRenderer.removeListener("data:changed", listener);
+  },
 
   checkForUpdates: () => ipcRenderer.invoke("update:check"),
   downloadUpdate: () => ipcRenderer.invoke("update:download"),
