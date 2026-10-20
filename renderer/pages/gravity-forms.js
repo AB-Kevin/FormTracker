@@ -66,10 +66,15 @@ window.Pages["gravity-forms"] = {
             <label>Member ID field ID</label>
             <input type="text" id="gf-member-id-field-id" placeholder="optional, e.g. 3" />
           </div>
+          <div class="field">
+            <label>Name field ID</label>
+            <input type="text" id="gf-name-field-id" placeholder="optional, e.g. 1" />
+          </div>
         </div>
         <p class="hint">Field IDs are shown in the Gravity Forms editor when you click a field (its "Field ID" appears in the field settings).
           If the form asks members for their member ID, entries without a token are matched by it against the contacts' ID column;
-          anything that can't be matched with confidence is listed on the Tracking page to match by hand.</p>
+          anything that can't be matched with confidence is listed on the Tracking page to match by hand.
+          The name field is only shown on that list to help recognize who an entry is from -- leave it blank to use the form's first Name field.</p>
 
         <div class="row" style="margin-top:12px">
           <button class="btn" id="save-gf-btn">Save connection</button>
@@ -100,6 +105,7 @@ window.Pages["gravity-forms"] = {
       qs("#gf-token-param", container).value = "rtoken";
       qs("#gf-token-field-id", container).value = "";
       qs("#gf-member-id-field-id", container).value = "";
+      qs("#gf-name-field-id", container).value = "";
       qs("#form-picker-field", container).style.display = "none";
       qs("#cancel-edit-btn", container).style.display = "none";
     }
@@ -166,6 +172,7 @@ window.Pages["gravity-forms"] = {
           qs("#gf-token-param", container).value = c.tokenParamName || "rtoken";
           qs("#gf-token-field-id", container).value = c.tokenFieldId || "";
           qs("#gf-member-id-field-id", container).value = c.memberIdFieldId || "";
+          qs("#gf-name-field-id", container).value = c.nameFieldId || "";
           qs("#cancel-edit-btn", container).style.display = "inline-block";
           window.scrollTo(0, 0);
         })
@@ -191,6 +198,7 @@ window.Pages["gravity-forms"] = {
       const tokenParamName = qs("#gf-token-param", container).value.trim() || "rtoken";
       const tokenFieldId = qs("#gf-token-field-id", container).value.trim();
       const memberIdFieldId = qs("#gf-member-id-field-id", container).value.trim();
+      const nameFieldId = qs("#gf-name-field-id", container).value.trim();
 
       if (!name || !siteUrl || !consumerKey || !formId || !pageUrl || !tokenFieldId) {
         toast("Fill in name, site URL, consumer key, form ID, page URL, and token field ID.", true);
@@ -201,7 +209,7 @@ window.Pages["gravity-forms"] = {
         return;
       }
 
-      const data = { name, siteUrl, consumerKey, formId, pageUrl, tokenParamName, tokenFieldId, memberIdFieldId };
+      const data = { name, siteUrl, consumerKey, formId, pageUrl, tokenParamName, tokenFieldId, memberIdFieldId, nameFieldId };
       if (consumerSecret) data.consumerSecret = consumerSecret;
 
       if (editingId) {

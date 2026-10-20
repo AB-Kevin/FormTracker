@@ -907,7 +907,7 @@ async function syncGravityForms() {
     const previous = new Map(store.list("gfUnmatched").filter((u) => u.gravityFormId === gf.id).map((u) => [u.gfEntryId, u]));
     const reviewRows = unmatched.map(({ entry, entryId, submittedAt, memberIdEntered, suggestions }) => {
       const prior = previous.get(entryId);
-      const who = form ? gravityForms.summarizeEntry(entry, form) : { name: prior?.name || "", email: prior?.email || "" };
+      const who = form ? gravityForms.summarizeEntry(entry, form, gf.nameFieldId) : { name: prior?.name || "", email: prior?.email || "" };
       return {
         ...(prior && { id: prior.id, createdAt: prior.createdAt }),
         gravityFormId: gf.id,
