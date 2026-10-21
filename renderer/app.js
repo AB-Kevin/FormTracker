@@ -27,6 +27,7 @@ const FILTER_OPS = [
   { value: "notEmpty", label: "is not empty" },
   { value: "empty", label: "is empty" },
   { value: "equals", label: "equals" },
+  { value: "notEquals", label: "does not equal" },
   { value: "contains", label: "contains" },
   { value: "in", label: "is one of (comma-separated)" },
 ];
@@ -35,6 +36,53 @@ function filterOpLabel(op) {
 }
 function filterRuleNeedsValue(op) {
   return op !== "empty" && op !== "notEmpty";
+}
+
+// The editable list of filter rules -- New Mailing, the Contacts page, and
+// the row filter for a linked list. Edits `rules` in place; `fields` is
+// [{ value, label }] or plain strings used as both; `emptyText` is shown
+// with no rules, or nothing if it's blank. `onRemove` runs after a rule is
+// removed.
+function renderFilterRules(area, rules, fields, emptyText, onRemove) {
+  const options = fields.map((f) => (typeof f === "string" ? { value: f, label: f } : f));
+  if (rules.length === 0) {
+    area.innerHTML = emptyText ? `<p class="hint">${escapeHtml(emptyText)}</p>` : "";
+    return;
+  }
+  area.innerHTML = rules
+    .map(
+      (rule, i) => `
+    <div class="filter-rule" data-idx="${i}">
+      <select class="rule-field">${options
+        .map((f) => `<option value="${escapeHtml(f.value)}" ${rule.field === f.value ? "selected" : ""}>${escapeHtml(f.label)}</option>`)
+        .join("")}</select>
+      <select class="rule-op">${FILTER_OPS.map(
+        (o) => `<option value="${o.value}" ${rule.op === o.value ? "selected" : ""}>${o.label}</option>`
+      ).join("")}</select>
+      <input type="text" class="rule-value" value="${escapeHtml(rule.value || "")}" style="${
+        filterRuleNeedsValue(rule.op) ? "" : "display:none"
+      }" />
+      <button class="btn danger" data-remove="${i}" type="button">Remove</button>
+    </div>`
+    )
+    .join("");
+
+  qsa(".filter-rule", area).forEach((rowEl) => {
+    const idx = Number(rowEl.dataset.idx);
+    qs(".rule-field", rowEl).addEventListener("change", (e) => (rules[idx].field = e.target.value));
+    qs(".rule-op", rowEl).addEventListener("change", (e) => {
+      rules[idx].op = e.target.value;
+      qs(".rule-value", rowEl).style.display = filterRuleNeedsValue(e.target.value) ? "" : "none";
+    });
+    qs(".rule-value", rowEl).addEventListener("input", (e) => (rules[idx].value = e.target.value));
+  });
+  qsa("[data-remove]", area).forEach((btn) =>
+    btn.addEventListener("click", () => {
+      rules.splice(Number(btn.dataset.remove), 1);
+      renderFilterRules(area, rules, fields, emptyText, onRemove);
+      onRemove?.();
+    })
+  );
 }
 
 // Shared by tracking.js and responses.js.
@@ -102,3 +150,4 @@ window.RESPONSE_CHANNEL_LABELS = RESPONSE_CHANNEL_LABELS;
 window.MATCHED_BY_LABELS = MATCHED_BY_LABELS;
 window.filterOpLabel = filterOpLabel;
 window.filterRuleNeedsValue = filterRuleNeedsValue;
+window.renderFilterRules = renderFilterRules;

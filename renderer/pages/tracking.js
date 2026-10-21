@@ -44,7 +44,8 @@ function needsEntering(row) {
 
 window.Pages.tracking = {
   async render(container) {
-    const mailings = await window.api.listMailings();
+    const [mailings, fields] = await Promise.all([window.api.listMailings(), window.api.filterableFields()]);
+    const allFields = [...fields.core, ...fields.extra.map((f) => `extra.${f}`)];
     const preselect = window.__trackingMailingFilter || "";
     window.__trackingMailingFilter = null;
     const preselectStatus = window.__trackingStatusFilter || "all";
@@ -53,6 +54,9 @@ window.Pages.tracking = {
     let channelFilter = "all";
     let mailingFilter = preselect;
     let searchTerm = "";
+    let fieldRules = [];
+    // Contact ids matching the applied field filters, or null with none.
+    let fieldContactIds = null;
     let rows = [];
     let expandedId = null;
     let review = { items: [], choices: {} };
@@ -115,6 +119,11 @@ window.Pages.tracking = {
           <button class="btn" id="mark-batch-btn" type="button" style="align-self:flex-end;margin-bottom:12px;display:none"></button>
           <button class="btn secondary" id="remail-batch-btn" type="button" style="align-self:flex-end;margin-bottom:12px;display:none"></button>
         </div>
+        <div id="field-rules-area"></div>
+        <div class="row" style="margin-bottom:12px">
+          <button class="btn secondary" id="add-field-rule-btn" type="button">+ Filter by contact field</button>
+          <button class="btn secondary" id="apply-field-rules-btn" type="button" style="display:none">Apply field filters</button>
+        </div>
         <table>
           <thead><tr><th>Name</th><th>Channel</th><th>Mailing</th><th>Sent</th><th>Status</th><th title="Entered into our records software">Entered</th><th></th></tr></thead>
           <tbody id="tracking-rows"></tbody>
@@ -139,6 +148,7 @@ window.Pages.tracking = {
         if (statusFilter === "not-mailed" && !canMarkMailed(r)) return false;
         if (statusFilter === "failed" && !isSendFailed(r)) return false;
         if (channelFilter !== "all" && r.channel !== channelFilter) return false;
+        if (fieldContactIds && !fieldContactIds.has(r.contactId)) return false;
         if (searchTerm) {
           const hay = `${r.contact?.name || ""} ${r.contact?.email || ""} ${r.contact?.externalId || ""}`.toLowerCase();
           if (!hay.includes(searchTerm)) return false;
@@ -662,6 +672,23 @@ window.Pages.tracking = {
     });
     qs("#search-box", container).addEventListener("input", (e) => {
       searchTerm = e.target.value.toLowerCase();
+      renderTable();
+    });
+    function renderFieldRules() {
+      qs("#apply-field-rules-btn", container).style.display = fieldRules.length ? "" : "none";
+      renderFilterRules(qs("#field-rules-area", container), fieldRules, allFields, "", () => {
+        qs("#apply-field-rules-btn", container).style.display = fieldRules.length ? "" : "none";
+        if (fieldRules.length || !fieldContactIds) return;
+        fieldContactIds = null;
+        renderTable();
+      });
+    }
+    qs("#add-field-rule-btn", container).addEventListener("click", () => {
+      fieldRules.push({ field: allFields[0] || "", op: "equals", value: "" });
+      renderFieldRules();
+    });
+    qs("#apply-field-rules-btn", container).addEventListener("click", async () => {
+      fieldContactIds = fieldRules.length ? new Set(await window.api.matchFilter(fieldRules)) : null;
       renderTable();
     });
     qs("#sync-btn", container).addEventListener("click", async () => {

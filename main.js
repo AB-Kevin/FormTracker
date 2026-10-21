@@ -9,7 +9,8 @@ const { randomUUID } = require("crypto");
 const store = require("./db/store");
 const dataLock = require("./lib/dataLock");
 const csvImport = require("./lib/csvImport");
-const { filterContacts, listFilterableFields } = require("./lib/filter");
+const { filterContacts, activeContacts, listFilterableFields } = require("./lib/filter");
+const fieldImport = require("./lib/fieldImport");
 const { renderTemplate, buildResponseLink, htmlToPlainText } = require("./lib/merge");
 const { stampToken } = require("./lib/pdfStamp");
 const { generatePaperLetter } = require("./lib/paperMerge");
@@ -173,8 +174,50 @@ ipcMain.handle("import:preview", async (event, filePath) => {
 handleEdit("import:commit", async (event, filePath, mapping, batchName) => {
   const { rows } = csvImport.parseFile(filePath);
   const contacts = csvImport.buildContacts(rows, mapping, batchName || path.basename(filePath));
+  // A contact updated by a re-import keeps the fields its file doesn't have
+  // -- in particular ones added from a linked list (see "field-import:commit"
+  // below), which would otherwise be gone until that list was added again.
+  // Whether it was removed is kept the same way, by upsertMany.
+  const existingById = new Map(store.list("contacts").filter((c) => c.externalId).map((c) => [c.externalId, c]));
+  let stillRemoved = 0;
+  for (const contact of contacts) {
+    const existing = contact.externalId ? existingById.get(contact.externalId) : null;
+    if (!existing) continue;
+    contact.extra = { ...existing.extra, ...contact.extra };
+    if (existing.removedAt) stillRemoved++;
+  }
   const { inserted, updated } = store.upsertMany("contacts", "externalId", contacts);
-  return { count: contacts.length, inserted, updated };
+  return { count: contacts.length, inserted, updated, stillRemoved };
+});
+
+// ---------------------------------------------------------------------------
+// Fields from a linked list (lib/fieldImport.js)
+// ---------------------------------------------------------------------------
+
+ipcMain.handle("field-import:preview", async (event, filePath) => {
+  const { headers, rows } = csvImport.parseFileAsText(filePath);
+  return {
+    headers,
+    sampleRows: rows.slice(0, 20),
+    totalRows: rows.length,
+    savedConfig: store.getSettings().fieldImport || null,
+  };
+});
+
+function planFieldImportFromFile(filePath, config) {
+  const { rows, rawRows } = csvImport.parseFileAsText(filePath);
+  return fieldImport.planFieldImport(activeContacts(store.list("contacts")), rows, rawRows, config);
+}
+
+ipcMain.handle("field-import:check", async (event, filePath, config) => planFieldImportFromFile(filePath, config).stats);
+
+handleEdit("field-import:commit", async (event, filePath, config) => {
+  const { updates, stats } = planFieldImportFromFile(filePath, config);
+  store.updateWhere("contacts", (c) => updates.has(c.id) && { extra: { ...c.extra, ...updates.get(c.id) } });
+  // Remembered on this computer so adding the next version of the file is
+  // just picking it.
+  store.updateSettings({ fieldImport: config });
+  return stats;
 });
 
 // ---------------------------------------------------------------------------
@@ -183,10 +226,10 @@ handleEdit("import:commit", async (event, filePath, mapping, batchName) => {
 
 ipcMain.handle("contacts:list", async () => store.list("contacts"));
 
-ipcMain.handle("contacts:filterable-fields", async () => listFilterableFields(store.list("contacts")));
+ipcMain.handle("contacts:filterable-fields", async () => listFilterableFields(activeContacts(store.list("contacts"))));
 
 ipcMain.handle("contacts:preview-filter", async (event, rules) => {
-  const contacts = store.list("contacts");
+  const contacts = activeContacts(store.list("contacts"));
   const matched = filterContacts(contacts, rules);
   return {
     total: matched.length,
@@ -194,6 +237,23 @@ ipcMain.handle("contacts:preview-filter", async (event, rules) => {
     withoutEmail: matched.filter((c) => !c.email).length,
     sample: matched.slice(0, 25),
   };
+});
+
+// Ids of every contact, removed or not, matching a mailing-style filter --
+// the Contacts page narrows its list with this.
+ipcMain.handle("contacts:match-filter", async (event, rules) => filterContacts(store.list("contacts"), rules).map((c) => c.id));
+
+// Removing only hides a contact (see activeContacts in lib/filter.js), so it
+// can be restored and the mailings it's already in are unaffected.
+handleEdit("contacts:remove", async (event, ids) => {
+  const toRemove = new Set(ids);
+  const now = new Date().toISOString();
+  return store.updateWhere("contacts", (c) => toRemove.has(c.id) && !c.removedAt && { removedAt: now });
+});
+
+handleEdit("contacts:restore", async (event, ids) => {
+  const toRestore = new Set(ids);
+  return store.updateWhere("contacts", (c) => toRestore.has(c.id) && c.removedAt && { removedAt: null });
 });
 
 // ---------------------------------------------------------------------------
@@ -317,7 +377,7 @@ ipcMain.handle("settings:test-smtp", async () => {
 ipcMain.handle("mailings:list", async () => store.list("mailings"));
 
 handleEdit("mailings:create", async (event, { name, templateId, paperTemplateId, gravityFormId, filterRules }) => {
-  const contacts = filterContacts(store.list("contacts"), filterRules);
+  const contacts = filterContacts(activeContacts(store.list("contacts")), filterRules);
   const mailing = store.insert("mailings", {
     name,
     templateId,
@@ -663,6 +723,24 @@ handleEdit("tracking:unmark-mailed", async (event, recipientId) => {
 handleEdit("tracking:remove-recipient", async (event, recipientId) => {
   const recipient = store.get("mailingRecipients", recipientId);
   if (!recipient) throw new Error("Recipient not found.");
+  // The sync skips Gravity Forms entries that have a response recorded, so
+  // without one these would come back under "Online responses to match".
+  // Kept there as dismissed instead -- see syncGravityForms.
+  const gravityFormId = store.get("mailings", recipient.mailingId)?.gravityFormId;
+  const entryIds = store
+    .list("responses")
+    .filter((resp) => resp.mailingRecipientId === recipientId && resp.gfEntryId)
+    .map((resp) => String(resp.gfEntryId));
+  if (gravityFormId && entryIds.length) {
+    const known = new Set(store.list("gfUnmatched").filter((u) => u.gravityFormId === gravityFormId).map((u) => String(u.gfEntryId)));
+    store.updateWhere("gfUnmatched", (u) => u.gravityFormId === gravityFormId && entryIds.includes(String(u.gfEntryId)) && { dismissed: true });
+    store.insertMany(
+      "gfUnmatched",
+      entryIds
+        .filter((id) => !known.has(id))
+        .map((gfEntryId) => ({ gravityFormId, gfEntryId, submittedAt: null, memberIdEntered: "", name: "", email: "", suggestedRecipientIds: [], dismissed: true, entry: {} }))
+    );
+  }
   store.removeWhere("responses", (resp) => resp.mailingRecipientId === recipientId);
   store.remove("mailingRecipients", recipientId);
   return true;

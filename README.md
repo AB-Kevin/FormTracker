@@ -5,6 +5,8 @@ A desktop tool to send form requests to a mailing list — by email or paper mai
 ## What it does
 
 1. Import a mailing list from a CSV or spreadsheet file. Any column not explicitly mapped is kept and can still be used to select recipients. Map a column to **ID** and re-importing later updates any contact whose ID matches, in place, instead of creating a duplicate — so a refreshed list keeps its mailing/tracking history.
+   - **Add fields from a linked list** brings in fields from a second file that lists the same people differently — e.g. "Over 65" (Yes/No, worked out from birthdates) from a list of every individual member, added to a contact list of households. Pick the ID column the two files share, filter the second file down to the rows to use (e.g. Relationship equals Head), and choose the fields to add. Re-importing the contact list keeps fields added this way.
+   - On **Contacts**, remove contacts that shouldn't get mailings (test accounts, inactive households — filter on any field and select all matches). Removed contacts are left out of new mailings and stay removed when the list is imported again, but can be restored; mailings they're already in are unchanged.
 2. Build a mailing by filtering the list on any field (e.g. "Committee = Finance").
 3. Contacts with an email address get the email version; everyone else gets the paper version.
 4. Email and paper mailings use separate templates.
@@ -45,7 +47,7 @@ FormTracker never needs an inbound connection to your computer — it only reach
 
 ## Typical workflow
 
-1. **Import List** — upload your CSV/spreadsheet, map columns, import.
+1. **Import List** — upload your CSV/spreadsheet, map columns, import. Then, if needed, **Add fields from a linked list** (e.g. Over 65), and remove test or inactive contacts on **Contacts**.
 2. **Templates** — create one email template and one paper template. Use `{{externalId}}`, `{{name}}`, `{{email}}`, `{{addressLine1}}`, `{{form_link}}`, or `{{extra.ColumnName}}` for any other imported column. Attach a fillable PDF to the email template.
 3. **Gravity Forms** — register your form connection (one-time, see above).
 4. **Settings** — enter your SMTP details and send a test. **Appearance** there switches between light and dark, or matches Windows.

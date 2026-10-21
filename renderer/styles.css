@@ -375,6 +375,10 @@ tr:hover td { background: var(--green-050); }
 .rte-body ul, .rte-body ol { margin: 0 0 8px 20px; padding: 0; }
 
 .contact-row { cursor: pointer; }
+.check-col { width: 1%; }
+.check-col input { width: 16px; height: 16px; margin: 0; cursor: pointer; accent-color: var(--green-500); vertical-align: middle; }
+.contacts-toolbar { margin-bottom: 8px; min-height: 36px; }
+.contacts-toolbar .hint { margin-top: 0; margin-right: auto; }
 .contact-detail-row td { background: var(--surface-card-alt); }
 .detail-table { width: auto; }
 .detail-table th { width: 1%; white-space: nowrap; padding-right: 24px; color: var(--text-muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: var(--tracking-label); }
@@ -434,3 +438,8 @@ tr:hover td { background: var(--green-050); }
 .resp-answers td:last-child { width: 1%; }
 .resp-section td { padding-top: 20px; font-weight: 600; font-size: 13.5px; color: var(--text-heading); border-bottom: 2px solid var(--border-rule); }
 button.copy-btn { padding: 3px 10px; font-size: 12px; }
+
+.copy-columns { display: flex; flex-wrap: wrap; gap: 8px 20px; }
+.result-list { margin: 8px 0; }
+.result-list summary { cursor: pointer; color: var(--text-heading); }
+.result-list ul { margin: 6px 0 0 20px; padding: 0; max-height: 240px; overflow-y: auto; }

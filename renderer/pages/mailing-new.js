@@ -57,44 +57,7 @@ window.Pages["mailing-new"] = {
     `;
 
     function renderRules() {
-      const area = qs("#rules-area", container);
-      if (rules.length === 0) {
-        area.innerHTML = '<p class="hint">No filters — this mailing will include every contact.</p>';
-        return;
-      }
-      area.innerHTML = rules
-        .map(
-          (rule, i) => `
-        <div class="filter-rule" data-idx="${i}">
-          <select class="rule-field">${allFields
-            .map((f) => `<option value="${escapeHtml(f)}" ${rule.field === f ? "selected" : ""}>${escapeHtml(f)}</option>`)
-            .join("")}</select>
-          <select class="rule-op">${FILTER_OPS.map(
-            (o) => `<option value="${o.value}" ${rule.op === o.value ? "selected" : ""}>${o.label}</option>`
-          ).join("")}</select>
-          <input type="text" class="rule-value" value="${escapeHtml(rule.value || "")}" style="${
-            rule.op === "empty" || rule.op === "notEmpty" ? "display:none" : ""
-          }" />
-          <button class="btn danger" data-remove="${i}" type="button">Remove</button>
-        </div>`
-        )
-        .join("");
-
-      qsa(".filter-rule", area).forEach((rowEl) => {
-        const idx = Number(rowEl.dataset.idx);
-        qs(".rule-field", rowEl).addEventListener("change", (e) => (rules[idx].field = e.target.value));
-        qs(".rule-op", rowEl).addEventListener("change", (e) => {
-          rules[idx].op = e.target.value;
-          qs(".rule-value", rowEl).style.display = e.target.value === "empty" || e.target.value === "notEmpty" ? "none" : "";
-        });
-        qs(".rule-value", rowEl).addEventListener("input", (e) => (rules[idx].value = e.target.value));
-      });
-      qsa("[data-remove]", area).forEach((btn) =>
-        btn.addEventListener("click", () => {
-          rules.splice(Number(btn.dataset.remove), 1);
-          renderRules();
-        })
-      );
+      renderFilterRules(qs("#rules-area", container), rules, allFields, "No filters — this mailing will include every contact.");
     }
 
     qs("#add-rule-btn", container).addEventListener("click", () => {

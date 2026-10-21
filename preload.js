@@ -4,10 +4,16 @@ contextBridge.exposeInMainWorld("api", {
   pickImportFile: () => ipcRenderer.invoke("dialog:pick-import-file"),
   previewImport: (filePath) => ipcRenderer.invoke("import:preview", filePath),
   commitImport: (filePath, mapping, batchName) => ipcRenderer.invoke("import:commit", filePath, mapping, batchName),
+  previewFieldImport: (filePath) => ipcRenderer.invoke("field-import:preview", filePath),
+  checkFieldImport: (filePath, config) => ipcRenderer.invoke("field-import:check", filePath, config),
+  commitFieldImport: (filePath, config) => ipcRenderer.invoke("field-import:commit", filePath, config),
 
   listContacts: () => ipcRenderer.invoke("contacts:list"),
   filterableFields: () => ipcRenderer.invoke("contacts:filterable-fields"),
   previewFilter: (rules) => ipcRenderer.invoke("contacts:preview-filter", rules),
+  matchFilter: (rules) => ipcRenderer.invoke("contacts:match-filter", rules),
+  removeContacts: (ids) => ipcRenderer.invoke("contacts:remove", ids),
+  restoreContacts: (ids) => ipcRenderer.invoke("contacts:restore", ids),
 
   listTemplates: () => ipcRenderer.invoke("templates:list"),
   createTemplate: (data) => ipcRenderer.invoke("templates:create", data),
