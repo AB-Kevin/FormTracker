@@ -6,7 +6,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 
   const version = await window.api.getVersion();
-  qs("#version-tag").textContent = `v${version}`;
+  qs("#version-tag").textContent = version;
 
   // Background syncs only speak up when something changed, so a connection
   // that stays broken (or a review list nobody has gotten to yet) doesn't
