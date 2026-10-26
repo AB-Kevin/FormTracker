@@ -56,6 +56,20 @@ FormTracker never needs an inbound connection to your computer — it only reach
 7. **Tracking** — see who has and hasn't responded; **Resend** on an emailed row sends that one person the form again. For paper, reprint the letter (**Open letter**) and use **Mark re-mailed** on the row to record when the second copy went out — or filter Status to **Not yet responded** and Channel to **Paper** and use the **Mark … as re-mailed** button to record the whole set at once. Online responses show up automatically after a sync. Use **Mark received…** to record an emailed-back PDF or a mailed-back paper form, with the PDF or scan attached. For someone who has already responded (e.g. they submitted online and then emailed a PDF too), use **Attach file…** on their row; open or remove attached files by clicking the row. Once a response has been entered into the office's records software, tick its **Entered** box (the date is recorded); filter Status to **Responded — not yet entered** to see what's still waiting. Export to CSV/Excel any time.
 8. **Responses** — work through returned forms one at a time while entering them into the records software: the member ID and each answer (labeled with the form's own questions) have **Copy** buttons, and **Mark entered & next** ticks the response off and moves to the next one. Any attached PDFs or scans are listed above the answers, and **Attach file…** adds one there too. Every online submission is kept; if someone submits again after their response was entered, it goes back into the "not yet entered" queue.
 
+## Releasing
+
+Pushing a version tag builds the Windows installer on GitHub and publishes it as a release (`.github/workflows/release.yml`). Once your changes are committed:
+
+```
+npm version patch       # or minor / major: bumps the version, commits, and tags vX.Y.Z
+git push --follow-tags  # or run `git config push.followTags true` once, then plain `git push`
+```
+
+The release appears on the repository's **Releases** page a few minutes later as `FormTracker-Setup-X.Y.Z.exe`, with its `.blockmap` and a `latest.yml` beside it. It is published only once all three files are attached, so the in-app updater and AB Apps never find a latest release without `latest.yml`. The build stops without publishing if the tag doesn't match the version in package.json.
+
+- To build the installer locally instead, run `npm run dist`. It is written to `dist/`.
+- Keep the tag as `vX.Y.Z` and leave `artifactName` in package.json as it is: the workflow uploads the installer by that name, and `latest.yml` points the updater at it.
+
 ## Project layout
 
 - `main.js` / `preload.js` — Electron main process and the IPC bridge exposed to the UI.
