@@ -106,11 +106,26 @@ if (process.env.FORMTRACKER_DATA_DIR) {
   app.setPath("userData", process.env.FORMTRACKER_DATA_DIR);
 }
 
+// A second copy on this computer would compete with this one for the data
+// folder's edit lock (see lib/dataLock.js), so it just brings this window
+// forward and quits. Other computers aren't affected.
+const isPrimaryInstance = app.requestSingleInstanceLock();
+if (!isPrimaryInstance) app.quit();
+
+app.on("second-instance", () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
+});
+
 function sendToWindow(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
 }
 
 app.whenReady().then(() => {
+  if (!isPrimaryInstance) return;
+  // The installer's build.appId, so taskbar pinning and grouping match the shortcuts.
+  app.setAppUserModelId("com.formtracker.app");
   store.init(app.getPath("userData"));
   // A backstop for the per-handler check in handleEdit below: nothing
   // reaches the data folder's files unless this computer holds its lock.

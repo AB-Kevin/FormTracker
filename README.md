@@ -1,4 +1,4 @@
-# FormTracker 0.0.1
+# FormTracker
 
 A desktop tool to send form requests to a mailing list — by email or paper mail depending on what's on file — and track who has responded and who hasn't.
 
