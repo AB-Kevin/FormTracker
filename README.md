@@ -36,7 +36,7 @@ While someone is signed in and a manager has set them on AB Apps' **Mail and web
 ```
 npm install
 npm start
-npm test    # two computers sharing a data folder
+npm test    # sharing a data folder, and the build settings
 ```
 
 All data (contacts, templates, generated PDFs/letters, and tracking records) is stored locally under the app's data folder — see **Settings → Data location** inside the app.
@@ -82,11 +82,11 @@ FormTracker never needs an inbound connection to your computer — it only reach
 Pushing a version tag builds the Windows installer on GitHub and publishes it as a release (`.github/workflows/release.yml`). Once your changes are committed:
 
 ```
-npm version patch       # or minor / major: bumps the version, commits, and tags vX.Y.Z
+npm version patch       # or minor / major: runs the tests, bumps the version, commits, and tags vX.Y.Z
 git push --follow-tags  # or run `git config push.followTags true` once, then plain `git push`
 ```
 
-The release appears on the repository's **Releases** page a few minutes later as `FormTracker-Setup-X.Y.Z.exe`, with its `.blockmap` and a `latest.yml` beside it. It is published only once all three files are attached, so the in-app updater and AB Apps never find a latest release without `latest.yml`. The build stops without publishing if the tag doesn't match the version in package.json.
+The release appears on the repository's **Releases** page a few minutes later as `FormTracker-Setup-X.Y.Z.exe`, with its `.blockmap` and a `latest.yml` beside it. It is published only once all three files are attached, so the in-app updater and AB Apps never find a latest release without `latest.yml`. The build stops without publishing if the tag doesn't match the version in package.json, or if a test fails.
 
 - To build the installer locally instead, run `npm run dist`. It is written to `dist/`.
 - Keep the tag as `vX.Y.Z` and leave `artifactName` in package.json as it is: the workflow uploads the installer by that name, and `latest.yml` points the updater at it.

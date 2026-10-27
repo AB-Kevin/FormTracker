@@ -3,15 +3,17 @@
   "version": "1.4.0",
   "description": "FormTracker - import a mailing list, send email/paper form requests, and track who has responded",
   "main": "main.js",
-  "author": "",
-  "license": "MIT",
+  "author": "Anabaptist Brotherhood",
+  "license": "UNLICENSED",
+  "private": true,
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win --publish never",
-    "test": "node --test --test-force-exit \"test/*.test.js\""
+    "test": "node --test --test-force-exit \"test/*.test.js\"",
+    "preversion": "npm test"
   },
   "devDependencies": {
-    "electron": "^43.4.1",
+    "electron": "^44.9.3",
     "electron-builder": "^26.15.3"
   },
   "build": {
@@ -45,10 +47,9 @@
   "dependencies": {
     "@fontsource/poppins": "^5.3.0",
     "electron-updater": "^6.8.9",
-    "nodemailer": "^6.9.16",
+    "nodemailer": "^10.2.1",
     "papaparse": "^5.4.1",
     "pdf-lib": "^1.17.1",
-    "uuid": "^9.0.1",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   }
 }
