@@ -33,11 +33,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 
   // Handlers that don't catch their own errors would otherwise fail
-  // silently -- most often now, a change refused because this computer is
-  // read-only.
+  // silently -- a send refused because this computer isn't the host, say.
   window.addEventListener("unhandledrejection", (e) => toast(e.reason?.message || String(e.reason), true));
 
-  initDataBanner();
+  initSharing();
 
   // Kept in a shared spot (not just local to the Settings page) so a check
   // already run before the user opens Settings shows its result immediately
@@ -56,12 +55,15 @@ function reloadCurrentPage() {
   if (active) navigate(active.dataset.page);
 }
 
-// The notices above every page about the data folder: read-only because
-// someone else is editing (see lib/dataLock.js), the folder unreachable, or
-// OneDrive conflict copies in it.
-async function initDataBanner() {
+// Sharing the data folder (see lib/team.js): the notices above every page --
+// the folder unreachable, an older FormTracker editing, this computer waiting
+// to be host or the host not open, OneDrive conflict copies, and changes
+// saved since the page loaded -- and, under the app's name, this computer's
+// part. A page isn't redrawn under someone's typing when others' changes
+// arrive; "Show new changes" does that.
+async function initSharing() {
   const banner = qs("#data-banner");
-  let state = await window.api.getDataState();
+  let status = await window.api.getTeamStatus();
   let changedSinceLoad = false;
 
   function line(tone, text, actions = []) {
@@ -86,63 +88,54 @@ async function initDataBanner() {
     banner.appendChild(el);
   }
 
-  // Both a button here and main's "data:state" report a change, in either
-  // order; whichever arrives second finds nothing new.
-  function apply(next) {
-    const was = state.mode;
-    state = next;
-    if (was === "editing" && next.mode === "read-only" && next.holder?.active) {
-      toast(`${next.holder.user} on ${next.holder.machine} took over editing. FormTracker is now read-only here.`, true);
-    }
-    // The page may be showing data from before; whatever comes next is
-    // done against what's saved now.
-    if (was !== "editing" && next.mode === "editing") reloadCurrentPage();
-    render();
-  }
-
-  async function startEditing() {
-    const next = await window.api.startEditing();
-    if (next.mode !== "editing") toast("Someone else started editing first.", true);
-    apply(next);
-  }
-
-  async function takeOver() {
-    const h = state.holder;
-    const ok = await confirmAction(
-      `Take over editing from ${h.user} on ${h.machine}? If they're still working, anything they change after this won't be saved.`,
-      "Take over"
-    );
-    if (!ok) return;
-    apply(await window.api.takeOverEditing());
-  }
-
   function render() {
+    window.__teamStatus = status;
     banner.replaceChildren();
-    const h = state.holder;
-    if (state.mode === "unavailable") {
-      line("danger", `Can't reach the data folder (${state.dataDir}), so nothing can be shown or saved. Check that OneDrive is running and the folder is synced, or choose another folder in Settings.`);
-    } else if (state.mode === "read-only") {
-      const reload = changedSinceLoad ? [{ label: "Show new changes", onClick: reloadCurrentPage }] : [];
-      if (h?.active) {
-        line("warn", `Read-only — ${h.user} on ${h.machine} is editing.${changedSinceLoad ? " They've saved changes since this page loaded." : ""}`, [
-          ...reload,
-          { label: "Take over editing", onClick: takeOver },
-        ]);
-      } else {
-        const who = h ? `${h.user} on ${h.machine} hasn't been active since ${formatDate(h.heartbeatAt)}.` : "Nobody is editing now.";
-        line("warn", `Read-only — ${who}`, [...reload, { label: "Start editing", onClick: startEditing }]);
-      }
+    const unsaved = status.unsaved ? ` (${plural(status.unsaved, "change")})` : "";
+    if (status.role === "unavailable") {
+      line("danger", `Can't reach the data folder (${status.dataDir}), so nothing can be shown or saved. Check that OneDrive is running and the folder is synced, or choose another folder in Settings.`);
+    } else if (status.olderEditor) {
+      const o = status.olderEditor;
+      line("warn", `${o.user} on ${o.machine} is editing with an older FormTracker, so nothing is saved to the shared files until that copy closes or is updated. Changes made here wait on this computer${unsaved}.`);
+    } else if (status.role === "waiting-host") {
+      line("warn", `This computer is set as the host, but ${status.host?.name ?? "another"}'s computer already is. Only one host works at a time, so this computer's changes go through that one until its app closes. To stop being the host, turn it off in Settings.`);
+    } else if (status.role === "host" && status.otherHosts.length) {
+      line("warn", `${status.otherHosts.join(", ")} ${status.otherHosts.length === 1 ? "is" : "are"} also set as the host. This computer is acting as host; the others wait.`);
+    } else if (status.role === "editor" && !status.host) {
+      line("warn", `The host computer's app isn't open, so changes made here are kept on this computer for now${unsaved}. They're saved to the shared files when it's open again, and until then nobody else sees them.`);
     }
-    if (state.conflicts?.length) {
-      line("danger", `OneDrive kept conflicting copies of FormTracker's data: ${state.conflicts.join(", ")}. Changes in those copies aren't in FormTracker.`, [
-        { label: "Open data folder", onClick: () => window.api.openPath(state.dataDir) },
+    if (changedSinceLoad) {
+      line("info", "Changes have been saved since this page loaded.", [{ label: "Show new changes", onClick: reloadCurrentPage }]);
+    }
+    if (status.conflicts?.length) {
+      line("danger", `OneDrive kept conflicting copies of FormTracker's data: ${status.conflicts.join(", ")}. Changes in those copies aren't in FormTracker.`, [
+        { label: "Open data folder", onClick: () => window.api.openPath(status.dataDir) },
       ]);
     }
+
+    const others = status.people.filter((p) => !p.isMe);
+    let text = "";
+    if (status.role === "host") text = others.length ? `Host · ${plural(others.length, "other computer")} editing` : "";
+    else if (status.role === "waiting-host") text = "Host on hold";
+    else if (status.role === "editor") {
+      if (!status.host) text = "Editing · host not open";
+      else text = status.unsaved ? `Saving ${plural(status.unsaved, "change")} through ${status.host.name}` : `Editing · ${status.host.name} is host`;
+    }
+    const teamLine = qs("#team-line");
+    teamLine.textContent = text;
+    teamLine.hidden = !text;
   }
 
-  window.api.onDataState(apply);
+  window.api.onTeamStatus((next) => {
+    const was = status.role;
+    status = next;
+    // The folder came back (OneDrive started late, say): show what's in it.
+    if (was === "unavailable" && next.role !== "unavailable") reloadCurrentPage();
+    render();
+  });
 
-  window.api.onDataChanged(() => {
+  window.api.onDataChanged(({ messages }) => {
+    for (const message of messages || []) toast(message);
     changedSinceLoad = true;
     render();
   });

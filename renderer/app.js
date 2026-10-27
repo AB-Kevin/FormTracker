@@ -94,6 +94,11 @@ const MATCHED_BY_LABELS = {
   manual: "Matched by hand",
 };
 
+// "1 change", "3 changes".
+function plural(n, one, many = `${one}s`) {
+  return `${n.toLocaleString()} ${n === 1 ? one : many}`;
+}
+
 function formatDate(iso) {
   if (!iso) return "";
   const d = new Date(iso);
@@ -145,6 +150,7 @@ window.toast = toast;
 window.confirmAction = confirmAction;
 window.escapeHtml = escapeHtml;
 window.formatDate = formatDate;
+window.plural = plural;
 window.FILTER_OPS = FILTER_OPS;
 window.RESPONSE_CHANNEL_LABELS = RESPONSE_CHANNEL_LABELS;
 window.MATCHED_BY_LABELS = MATCHED_BY_LABELS;

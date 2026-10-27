@@ -24,7 +24,7 @@ A desktop tool to send form requests to a mailing list — by email or paper mai
 
 ## Settings from AB Apps
 
-While someone is signed in to [AB Apps](https://github.com/AB-Kevin/ab-apps), the editing lock carries their AB Apps name instead of the Windows user name, so the read-only view says who is editing by name. Signing in or out there shows up within a few seconds.
+While someone is signed in to [AB Apps](https://github.com/AB-Kevin/ab-apps), others using the same data folder see their AB Apps name instead of the one set under **Settings → Sharing**, which is then read-only. Signing in or out there shows up within a few seconds.
 
 While someone is signed in and a manager has set them on AB Apps' **Mail and website** page, FormTracker also uses AB Apps' mail server and website instead of its own (`lib/abApps.js`):
 
@@ -36,11 +36,22 @@ While someone is signed in and a manager has set them on AB Apps' **Mail and web
 ```
 npm install
 npm start
+npm test    # two computers sharing a data folder
 ```
 
 All data (contacts, templates, generated PDFs/letters, and tracking records) is stored locally under the app's data folder — see **Settings → Data location** inside the app.
 
-To share it with a team, copy the data folder's contents (all but `settings.json`) into a OneDrive/SharePoint folder everyone syncs and choose that folder under **Settings → Data location** on each computer. Only one computer edits at a time: the first to open FormTracker takes a lock file (`formtracker.lock`) in the folder, and everyone else gets a read-only view with a **Take over editing** button. SMTP settings, the theme, and Gravity Forms consumer secrets stay on each computer.
+To share it with a team, copy the data folder's contents (all but `settings.json`) into a OneDrive/SharePoint folder everyone syncs and choose that folder under **Settings → Data location** on each computer. SMTP settings, the theme, and Gravity Forms consumer secrets stay on each computer.
+
+### Sharing a data folder
+
+Several computers can work on the data at once, the same way as in SendNewsletters (`lib/team.js`):
+
+- **One computer is the host.** It saves everyone's changes to the shared files, sends mailings, and syncs Gravity Forms. Every other computer is an **editor**: its changes are recorded in its own file under `people/` and show on it straight away, and the host saves them within seconds of OneDrive syncing. The header says which this computer is.
+- **Who's host:** the first computer to use a folder, and any computer that's the only one there when it joins; one joining while the host is open becomes an editor. To hand the job over, tick **This computer is the host** under **Settings → Sharing** on the new one and untick it on the old one. If two are set as host, the one that's been host longer does the job and the other waits.
+- **The host's app has to be open** for changes to be saved. Until it is, they wait safely on the computer that made them, and a notice says so.
+- Changes are put in order by each computer's clock, so keep Windows' automatic time setting on. Two people changing different fields of one record both keep their change.
+- **Updating computers one at a time:** an older FormTracker on another computer still uses `formtracker.lock`. The host keeps that lock, so an older copy opens read-only. If an older copy is editing, nothing is saved to the shared files until it closes or is updated, and a notice names it (`lib/legacyLock.js`).
 
 ## One-time Gravity Forms setup (for the online response channel)
 
@@ -93,6 +104,7 @@ npm install https://cdn.sheetjs.com/xlsx-X.Y.Z/xlsx-X.Y.Z.tgz
 ## Project layout
 
 - `main.js` / `preload.js` — Electron main process and the IPC bridge exposed to the UI.
-- `db/store.js` — local JSON-file data store (contacts, templates, mailings, tracking).
+- `db/store.js` — local JSON-file data store (contacts, templates, mailings, tracking), with the host and editors' change journal.
+- `lib/team.js`, `lib/legacyLock.js` — sharing a data folder between computers, and keeping older versions out of the way.
 - `lib/` — CSV/spreadsheet import, template merging, PDF stamping, paper letter generation, SMTP sending, and the Gravity Forms API client.
 - `renderer/` — the UI (plain HTML/CSS/JS, no build step).

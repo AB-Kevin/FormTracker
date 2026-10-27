@@ -224,6 +224,11 @@ code {
   border-bottom: 1px solid var(--border-hairline);
 }
 .data-banner-line.warn { color: var(--warn); }
+.data-banner-line.info { color: var(--text-muted); }
+.check-label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.check-label input { width: 16px; height: 16px; margin: 0; accent-color: var(--fill-accent); cursor: pointer; }
+.people-list { margin: 8px 0 0; padding-left: 18px; }
+.people-list li { margin: 2px 0; }
 .data-banner-line.danger { color: var(--danger); background: var(--danger-tint); }
 .data-banner-line .data-banner-actions { margin-left: auto; display: flex; gap: 8px; flex-shrink: 0; }
 

@@ -4,10 +4,12 @@ const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, clipboard, nati
 const { autoUpdater } = require("electron-updater");
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
 const { randomUUID } = require("crypto");
 
 const store = require("./db/store");
-const dataLock = require("./lib/dataLock");
+const { Team, readPeople, isActive, activeHosts } = require("./lib/team");
+const legacyLock = require("./lib/legacyLock");
 const csvImport = require("./lib/csvImport");
 const { filterContacts, activeContacts, listFilterableFields } = require("./lib/filter");
 const fieldImport = require("./lib/fieldImport");
@@ -118,9 +120,9 @@ if (process.env.FORMTRACKER_DATA_DIR) {
   app.setPath("userData", process.env.FORMTRACKER_DATA_DIR);
 }
 
-// A second copy on this computer would compete with this one for the data
-// folder's edit lock (see lib/dataLock.js), so it just brings this window
-// forward and quits. Other computers aren't affected.
+// A second copy on this computer would be a second computer in the data
+// folder's sharing (see lib/team.js) under the same name, so it just brings
+// this window forward and quits. Other computers aren't affected.
 const isPrimaryInstance = app.requestSingleInstanceLock();
 if (!isPrimaryInstance) app.quit();
 
@@ -139,25 +141,30 @@ app.whenReady().then(() => {
   // The installer's build.appId, so taskbar pinning and grouping match the shortcuts.
   app.setAppUserModelId("com.formtracker.app");
   store.init(app.getPath("userData"));
-  // A backstop for the per-handler check in handleEdit below: nothing
-  // reaches the data folder's files unless this computer holds its lock.
+  // A backstop: nothing writes the shared files but the acting host.
   store.setWriteGuard(() => {
-    if (!dataLock.isEditing()) dataLock.assertEditing();
+    if (!actingHost) throw new Error("Only the host computer saves the shared files.");
   });
-  dataLock.onStateChange((state) => {
-    if (state.mode === "editing") removeSensitiveColumns();
-    sendToWindow("data:state", dataFolderState());
+  abIdentity = readIdentity(app.getPath("appData"));
+  legacyLock.setUser(shownName());
+  openTeam();
+  // Signing in or out of AB Apps, or a manager's rename there, reaches the others right away.
+  watchIdentity(app.getPath("appData"), (next) => {
+    abIdentity = next;
+    legacyLock.setUser(shownName());
+    try {
+      team?.setName(shownName(), abIdentity?.personId ?? null);
+    } catch {
+      // The data folder is unavailable for now; the next heartbeat writes the new name.
+    }
+    sendTeamStatus();
   });
-  dataLock.onExternalChange(() => sendToWindow("data:changed"));
-  // Others see who is editing by the name signed in to AB Apps, when there is one.
-  dataLock.setUser(readIdentity(app.getPath("appData"))?.name);
-  watchIdentity(app.getPath("appData"), (identity) => dataLock.setUser(identity?.name));
-  dataLock.start(store.getDataDir());
   nativeTheme.themeSource = savedTheme();
   createWindow();
-  // Only the editor syncs: recording responses is a change like any other.
+  // Only the host syncs: recording responses is a change like any other,
+  // and two computers syncing could record one entry twice.
   setInterval(() => {
-    if (!dataLock.isEditing()) return;
+    if (!actingHost) return;
     runSync()
       .then((summary) => sendToWindow("sync:completed", summary))
       .catch((err) => console.error("Background sync failed:", err));
@@ -172,15 +179,204 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("will-quit", () => dataLock.stop());
+app.on("will-quit", () => {
+  team?.close(); // tells everyone else this computer has left
+  legacyLock.stop();
+});
 
-// Handlers that change the data folder. Only the computer holding its lock
-// may run them (see lib/dataLock.js); anyone else gets an error saying who's
-// editing. Checked up front so nothing half-happens -- an email sent, say,
-// with no record of it saved.
+// ---------------------------------------------------------------------------
+// Sharing a data folder: one host, and editors (see lib/team.js)
+// ---------------------------------------------------------------------------
+// Several computers can work on the data at once. The host saves everyone's
+// changes to the shared files, sends mailings and syncs Gravity Forms; every
+// other computer's changes go to it and show up here straight away. The same
+// arrangement as SendNewsletters.
+
+let team = null;
+// This computer is set as host, is the longest-serving such computer that's
+// open, and no older FormTracker is editing: it writes the shared files.
+let actingHost = false;
+// Who is signed in to AB Apps on this computer, or null.
+let abIdentity = null;
+
+// Who is using this computer, set up the first time this version runs: the
+// host, unless the folder already has one open.
+function identity() {
+  const s = store.getSettings();
+  if (s.personId) return s;
+  const hostOpen = fs.existsSync(store.getDataDir()) && activeHosts(readPeople(store.getDataDir())).length > 0;
+  return store.updateSettings({
+    personId: randomUUID(),
+    personName: os.userInfo().username || "Me",
+    isHost: !hostOpen,
+    hostSince: hostOpen ? null : new Date().toISOString(),
+  });
+}
+
+/** The name others see: AB Apps' while someone is signed in there, otherwise the one set in Settings. */
+const shownName = () => abIdentity?.name ?? identity().personName;
+
+function folderAvailable() {
+  return fs.existsSync(store.getDataDir());
+}
+
+function openTeam() {
+  const me = identity();
+  const who = { id: me.personId, name: shownName(), abAppsId: abIdentity?.personId ?? null };
+  if (!team) {
+    team = new Team(who);
+    watchTeam();
+  } else {
+    team.identity = who;
+  }
+  actingHost = false;
+  team.setActing(false);
+  store.setJournal(team.journal);
+  legacyLock.start(store.getDataDir());
+  if (!folderAvailable()) {
+    // OneDrive not running yet, say. Checked again every half minute (see openTeamLater).
+    team.close();
+    sendTeamStatus();
+    return;
+  }
+  team.open(store.getDataDir(), { isHost: !!me.isHost, hostSince: me.hostSince });
+  updateRole();
+}
+
+// Works out whether this computer acts as host. The host then saves anything
+// others have sent; anywhere else, changes the host has saved are dropped.
+function updateRole() {
+  if (!team?.me || !team.dataDir) return;
+  const hosts = activeHosts(team.people());
+  const acting = !!store.getSettings().isHost && hosts[0]?.id === team.me.id && !legacyLock.olderEditor();
+  if (acting !== actingHost) {
+    actingHost = acting;
+    team.setActing(acting);
+    legacyLock.hold(acting);
+    if (acting) removeSensitiveColumns();
+  }
+  if (actingHost) saveIncoming();
+  else team.trim(store.isReflected);
+  sendTeamStatus();
+}
+
+function listNames(names) {
+  return names.length <= 2 ? names.join(" and ") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+function saveIncoming() {
+  const changes = team.incoming();
+  if (!changes.length) return;
+  try {
+    store.applyIncoming(changes);
+  } catch (err) {
+    console.error("Couldn't save others' changes:", err);
+    return; // tried again on the next change or tick
+  }
+  team.markApplied(changes);
+  const names = [...new Set(changes.filter((c) => c.personId !== team.me.id).map((c) => c.name))];
+  dataChanged(names.length ? `Saved changes from ${listNames(names)}.` : null);
+}
+
+function watchTeam() {
+  // Someone arrived, left, or sent changes: re-check who's host, and as
+  // host, save what's new.
+  team.on("people", () => updateRole());
+  // The host saved (or an older FormTracker changed something): everyone
+  // else shows it.
+  team.on("shared", () => {
+    if (actingHost) return;
+    team.trim(store.isReflected);
+    dataChanged(null);
+    sendTeamStatus();
+  });
+  team.on("changes", () => sendTeamStatus());
+}
+
+let dataChangedTimer = null;
+let dataChangedMessages = [];
+function dataChanged(message) {
+  if (message) dataChangedMessages.push(message);
+  clearTimeout(dataChangedTimer);
+  dataChangedTimer = setTimeout(() => {
+    const messages = dataChangedMessages;
+    dataChangedMessages = [];
+    sendToWindow("data:changed", { messages });
+  }, 300);
+}
+
+// A folder that wasn't there at startup (OneDrive still starting) is picked
+// up once it is.
+setInterval(() => {
+  if (team && !team.dataDir && folderAvailable()) openTeam();
+}, 30 * 1000);
+
+function teamStatus() {
+  const settings = store.getSettings();
+  const base = {
+    dataDir: store.getDataDir(),
+    isDefault: store.getDataDir() === store.getDefaultDataDir(),
+    available: !!team?.dataDir,
+    name: shownName(),
+    abApps: abIdentity && { name: abIdentity.name },
+    isHost: !!settings.isHost,
+    conflicts: team?.dataDir ? store.findConflictCopies(store.getDataDir()) : [],
+  };
+  if (!team?.dataDir) return { ...base, role: "unavailable", host: null, otherHosts: [], people: [], unsaved: 0, olderEditor: null };
+  const now = Date.now();
+  const people = team.people();
+  const hosts = activeHosts(people, now);
+  return {
+    ...base,
+    role: actingHost ? "host" : settings.isHost ? "waiting-host" : "editor",
+    host: hosts[0] ? { name: hosts[0].name, computer: hosts[0].computer, isMe: hosts[0].id === team.me.id } : null,
+    otherHosts: hosts.slice(1).map((h) => h.name),
+    people: people
+      .filter((p) => p.id === team.me.id || isActive(p, now))
+      .map((p) => ({ name: p.name, computer: p.computer, isMe: p.id === team.me.id, role: hosts[0]?.id === p.id ? "host" : "editor" })),
+    unsaved: actingHost ? 0 : team.unsavedCount(),
+    olderEditor: legacyLock.olderEditor(),
+  };
+}
+
+function sendTeamStatus() {
+  sendToWindow("team:status", teamStatus());
+}
+
+ipcMain.handle("team:status", async () => teamStatus());
+
+ipcMain.handle("team:save", async (event, { name, isHost }) => {
+  const was = store.getSettings();
+  // While someone is signed in to AB Apps the name comes from there, and the one set here waits.
+  const clean = abIdentity ? was.personName : String(name ?? "").replace(/\s+/g, " ").trim();
+  if (!clean) throw new Error("Enter the name others will see.");
+  if (clean.length > 60) throw new Error("Use 60 characters or fewer for the name.");
+  const hostSince = isHost ? (was.isHost ? was.hostSince : new Date().toISOString()) : null;
+  store.updateSettings({ personName: clean, isHost: !!isHost, hostSince });
+  if (team.me) {
+    if (team.me.name !== shownName()) team.setName(shownName());
+    if (!!isHost !== !!was.isHost) team.setRole(!!isHost, hostSince);
+  }
+  updateRole();
+  return teamStatus();
+});
+
+// Sending email and syncing Gravity Forms are the host's: two computers
+// sending the same mailing before either had seen the other's "sent" marks
+// would email people twice.
+function requireHost(what) {
+  if (actingHost) return;
+  const older = legacyLock.olderEditor();
+  if (older) throw new Error(`Only the host computer ${what}, and none can be while ${older.user} on ${older.machine} has an older FormTracker open. A test email works from any computer.`);
+  const host = team?.dataDir ? activeHosts(team.people())[0] : null;
+  throw new Error(`Only the host computer ${what}${host ? ` -- that's ${host.name}'s computer` : ", and its app isn't open right now"}. A test email works from any computer.`);
+}
+
+// Handlers that change the data folder: any computer may run them, and its
+// changes go to the host. They need the folder to be there.
 function handleEdit(channel, handler) {
   ipcMain.handle(channel, async (event, ...args) => {
-    dataLock.assertEditing();
+    if (!team?.dataDir) throw new Error("The data folder can't be reached right now, so nothing was saved. If OneDrive is starting up, wait for it and try again.");
     return handler(event, ...args);
   });
 }
@@ -226,7 +422,7 @@ handleEdit("import:commit", async (event, filePath, mapping, batchName) => {
 });
 
 // Contacts imported before FormTracker left out sensitive columns still have
-// them; they're removed the first time this computer edits. OneDrive's
+// them; they're removed the first time a computer is the host. OneDrive's
 // version history keeps the files as they were before.
 function removeSensitiveColumns() {
   try {
@@ -563,6 +759,7 @@ async function deliverToRecipient(recipient, contact, context) {
 }
 
 handleEdit("mailings:send", async (event, mailingId) => {
+  requireHost("sends mailings");
   const mailing = store.get("mailings", mailingId);
   if (!mailing) throw new Error("Mailing not found.");
   const context = loadSendContext(mailing);
@@ -575,9 +772,9 @@ handleEdit("mailings:send", async (event, mailingId) => {
   for (const recipient of recipients) {
     const contact = contactById.get(recipient.contactId);
     if (!contact) continue;
-    // Stops the whole send if someone has taken over editing meanwhile --
-    // otherwise each email would go out with no record of it saved.
-    dataLock.assertEditing();
+    // Stops the whole send if this computer stops being host meanwhile --
+    // otherwise each email would go out with its record waiting on another host.
+    requireHost("sends mailings");
     try {
       const outcome = await deliverToRecipient(recipient, contact, context);
       results[outcome]++;
@@ -821,6 +1018,7 @@ handleEdit("tracking:remove-recipient", async (event, recipientId) => {
 // address on their contact. A blank address switches them to a paper letter
 // instead -- e.g. a contact imported with "N/A" in the email column.
 handleEdit("tracking:retry-send", async (event, recipientId, email) => {
+  requireHost("sends mailings");
   const recipient = store.get("mailingRecipients", recipientId);
   if (!recipient) throw new Error("Recipient not found.");
   if (recipient.status !== "pending") throw new Error("This recipient has already been sent.");
@@ -845,6 +1043,7 @@ handleEdit("tracking:retry-send", async (event, recipientId, email) => {
 // skipped. A failure is only reported back, not saved -- the recipient was
 // still sent the first time.
 handleEdit("tracking:resend", async (event, recipientIds) => {
+  requireHost("sends emails");
   const ids = new Set(recipientIds || []);
   const recipients = store
     .list("mailingRecipients")
@@ -856,7 +1055,7 @@ handleEdit("tracking:resend", async (event, recipientIds) => {
   const results = { sent: 0, errors: [] };
   for (const recipient of recipients) {
     const contact = contactById.get(recipient.contactId);
-    dataLock.assertEditing(); // as in mailings:send
+    requireHost("sends emails"); // as in mailings:send
     try {
       const mailing = mailingById.get(recipient.mailingId);
       if (!mailing || !contact) throw new Error("This recipient's mailing or contact no longer exists.");
@@ -968,9 +1167,9 @@ function gfEntryUrl(gf, entryId) {
   return `${siteUrl.replace(/\/+$/, "")}/wp-admin/admin.php?page=gf_entries&view=entry&id=${encodeURIComponent(gf.formId)}&lid=${encodeURIComponent(entryId)}`;
 }
 
-// Skipped in the read-only view; the editor's next sync caches it.
+// Only on the host; elsewhere the host's next sync caches it.
 function cacheFormFields(gravityFormId, form) {
-  if (!dataLock.isEditing()) return;
+  if (!actingHost) return;
   store.upsertMany("gfForms", "gravityFormId", [
     { gravityFormId, fields: entryView.trimFormFields(form), fetchedAt: new Date().toISOString() },
   ]);
@@ -1086,7 +1285,10 @@ function runSync() {
   return syncInFlight;
 }
 
-handleEdit("sync:run", async () => runSync());
+handleEdit("sync:run", async () => {
+  requireHost("syncs Gravity Forms");
+  return runSync();
+});
 
 function describeRecipient(recipient, contactById, mailingById) {
   const contact = contactById.get(recipient.contactId);
@@ -1319,39 +1521,35 @@ ipcMain.handle("shell:open-external", async (event, url) => {
 ipcMain.handle("app:get-version", async () => app.getVersion());
 
 // ---------------------------------------------------------------------------
-// Data folder (Settings > Data location) and its edit lock
+// Data folder (Settings > Data location)
 // ---------------------------------------------------------------------------
 
-function dataFolderState() {
-  return { ...dataLock.getState(), isDefault: store.getDataDir() === store.getDefaultDataDir() };
-}
-
-ipcMain.handle("data:get-state", async () => dataFolderState());
-
-ipcMain.handle("data:start-editing", async () => {
-  dataLock.acquire(false);
-  return dataFolderState();
-});
-
-ipcMain.handle("data:take-over", async () => {
-  dataLock.acquire(true);
-  return dataFolderState();
-});
+// Where the data is, and who else is using it (the Settings page).
+ipcMain.handle("data:get-state", async () => teamStatus());
 
 function hasFormTrackerData(dir) {
   return ["contacts.json", "mailings.json"].some((file) => fs.existsSync(path.join(dir, file)));
 }
 
-// Gives up the current folder's lock and starts on another one -- waiting
-// out a sync in progress first, so it doesn't finish in the new folder.
+// Leaves the current folder and starts on another one -- waiting out a sync
+// in progress first, so it doesn't finish in the new folder. This computer
+// joins a folder whose host is open as an editor, and is host of one that
+// has none.
 async function switchDataDir(dir) {
   await syncInFlight?.catch(() => {});
-  dataLock.stop();
+  team.close();
+  store.setJournal(null);
+  legacyLock.stop();
+  actingHost = false;
   const isDefault = path.resolve(dir) === path.resolve(store.getDefaultDataDir());
   store.updateSettings({ dataDir: isDefault ? null : dir });
   store.setDataDir(isDefault ? store.getDefaultDataDir() : dir);
-  dataLock.start(store.getDataDir());
-  return dataFolderState();
+  const others = fs.existsSync(dir) ? readPeople(dir).filter((p) => p.id !== store.getSettings().personId) : [];
+  const hostOpen = activeHosts(others).length > 0;
+  if (hostOpen) store.updateSettings({ isHost: false, hostSince: null });
+  else if (!store.getSettings().isHost) store.updateSettings({ isHost: true, hostSince: new Date().toISOString() });
+  openTeam();
+  return teamStatus();
 }
 
 ipcMain.handle("data:choose-folder", async () => {

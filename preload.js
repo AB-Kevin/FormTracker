@@ -78,17 +78,17 @@ contextBridge.exposeInMainWorld("api", {
   getVersion: () => ipcRenderer.invoke("app:get-version"),
 
   getDataState: () => ipcRenderer.invoke("data:get-state"),
-  startEditing: () => ipcRenderer.invoke("data:start-editing"),
-  takeOverEditing: () => ipcRenderer.invoke("data:take-over"),
+  getTeamStatus: () => ipcRenderer.invoke("team:status"),
+  saveTeamSettings: (data) => ipcRenderer.invoke("team:save", data),
   chooseDataFolder: () => ipcRenderer.invoke("data:choose-folder"),
   useDefaultDataFolder: () => ipcRenderer.invoke("data:use-default-folder"),
-  onDataState: (callback) => {
-    const listener = (event, state) => callback(state);
-    ipcRenderer.on("data:state", listener);
-    return () => ipcRenderer.removeListener("data:state", listener);
+  onTeamStatus: (callback) => {
+    const listener = (event, status) => callback(status);
+    ipcRenderer.on("team:status", listener);
+    return () => ipcRenderer.removeListener("team:status", listener);
   },
   onDataChanged: (callback) => {
-    const listener = () => callback();
+    const listener = (event, payload) => callback(payload || {});
     ipcRenderer.on("data:changed", listener);
     return () => ipcRenderer.removeListener("data:changed", listener);
   },

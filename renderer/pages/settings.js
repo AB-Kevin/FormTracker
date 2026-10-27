@@ -7,13 +7,6 @@ function sharedMailNote(mail) {
           from ${escapeHtml(from)}. A manager changes it on AB Apps' Mail and website page.</p>`;
 }
 
-function describeDataMode(state) {
-  if (state.mode === "editing") return "You're editing this data. Anyone else who opens it now gets a read-only view.";
-  if (state.mode === "unavailable") return "This folder can't be reached right now.";
-  if (state.holder?.active) return `Read-only: ${state.holder.user} on ${state.holder.machine} is editing.`;
-  return "Read-only: nobody is editing now. Use Start editing at the top of the window to make changes.";
-}
-
 window.Pages.settings = {
   async render(container) {
     const settings = await window.api.getSettings();
@@ -89,14 +82,33 @@ window.Pages.settings = {
           <button class="btn secondary" id="change-data-dir-btn" type="button">Change folder…</button>
           ${dataState.isDefault ? "" : `<button class="btn secondary" id="default-data-dir-btn" type="button">Use this computer's folder</button>`}
         </div>
-        <p class="hint">${escapeHtml(describeDataMode(dataState))}</p>
+        ${dataState.available ? "" : `<p class="hint" style="color:var(--danger)">This folder can't be reached right now.</p>`}
         <p class="hint">
           To share the data with your team, copy everything in this folder except settings.json into a OneDrive or
           SharePoint folder everyone syncs, and choose that folder here — then choose it on each other computer too.
-          Only one person can edit at a time; anyone else with FormTracker open sees it read-only.
           SMTP settings, the test email address, the theme, and Gravity Forms consumer secrets aren't in this folder: each person
           enters their own here and on the Gravity Forms page, unless a manager sets the mail server and website in AB Apps.
         </p>
+      </div>
+
+      <div class="panel">
+        <h2 style="margin-top:0">Sharing</h2>
+        <p class="hint" style="margin-top:0">Several computers can work on the data at once from one shared folder. One of them is the host: it saves everyone's changes
+          to the shared files, and it's the one that sends mailings and syncs Gravity Forms. Everyone else's changes go to it, and show up on the other computers within
+          seconds of OneDrive syncing. The host's app has to be open for changes to be saved; until it is, they wait safely on the computer that made them.</p>
+        <div class="row" style="align-items:flex-end">
+          <div class="field" style="flex:1;max-width:320px">
+            <label for="team-name">Your name</label>
+            <input type="text" id="team-name" value="${escapeHtml(dataState.name || "")}" ${dataState.abApps ? "disabled" : ""} />
+            <p class="hint" id="team-name-hint">Shown to others using the same folder.</p>
+          </div>
+          <label class="check-label" style="margin-bottom:28px"><input type="checkbox" id="team-host" ${dataState.isHost ? "checked" : ""} /> This computer is the host</label>
+          <button class="btn" id="team-save-btn" type="button" style="margin-bottom:22px">Save</button>
+        </div>
+        <p id="team-summary"></p>
+        <ul class="people-list hint" id="team-people"></ul>
+        <p class="hint">If two computers are set as host, the one that has been host longer keeps the job and the other waits; when that one's app closes, the waiting one
+          takes over. Changes are put in order by each computer's clock, so keep Windows' automatic time setting on.</p>
       </div>
 
       <div class="panel">
@@ -165,6 +177,45 @@ window.Pages.settings = {
       const next = await window.api.useDefaultDataFolder();
       toast(`Now using ${next.dataDir}.`);
       navigate("settings");
+    });
+
+    const teamSummary = qs("#team-summary", container);
+    const onPage = () => document.body.contains(teamSummary);
+    function renderTeam(status) {
+      if (!status || !onPage()) return;
+      const summary = {
+        host: "This computer is the host.",
+        "waiting-host": `This computer is set as the host, but ${status.host?.name ?? "another"}'s computer already is, so this computer's changes go through that one for now.`,
+        editor: status.host ? `${status.host.name}'s computer is the host; changes made here are saved through it.` : "No host computer's app is open right now; changes made here wait on this computer until one is.",
+        unavailable: "The data folder can't be reached right now.",
+      }[status.role];
+      const unsaved = status.unsaved ? ` ${plural(status.unsaved, "change")} made here ${status.unsaved === 1 ? "is" : "are"} waiting to be saved.` : "";
+      teamSummary.textContent = summary + unsaved;
+      const others = status.people.filter((p) => !p.isMe);
+      qs("#team-people", container).innerHTML = others.length
+        ? others.map((p) => `<li>${escapeHtml(p.name)} — ${escapeHtml(p.computer || "")}${p.role === "host" ? " (host)" : ""}</li>`).join("")
+        : "<li>Nobody else is using this folder right now.</li>";
+      // While someone is signed in to AB Apps, others see that name, and it can't be changed here.
+      const nameInput = qs("#team-name", container);
+      if (status.abApps) nameInput.value = status.abApps.name;
+      else if (nameInput.disabled) nameInput.value = status.name; // just signed out: the name set here again
+      nameInput.disabled = !!status.abApps;
+      qs("#team-name-hint", container).textContent = status.abApps
+        ? "Shown to others using the same folder. It comes from AB Apps, where you're signed in; a manager changes it there."
+        : "Shown to others using the same folder.";
+    }
+    renderTeam(dataState);
+    const stopTeamStatus = window.api.onTeamStatus((status) => {
+      if (!onPage()) stopTeamStatus();
+      else renderTeam(status);
+    });
+    qs("#team-save-btn", container).addEventListener("click", async () => {
+      try {
+        renderTeam(await window.api.saveTeamSettings({ name: qs("#team-name", container).value, isHost: qs("#team-host", container).checked }));
+        toast("Sharing settings saved.");
+      } catch (err) {
+        toast(err.message, true);
+      }
     });
 
     qs("#theme-select", container).addEventListener("change", (e) =>
