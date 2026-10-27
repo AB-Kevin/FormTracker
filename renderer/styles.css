@@ -250,6 +250,7 @@ h2 { font-size: 15px; font-weight: 600; color: var(--text-heading); margin: 24px
 
 .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.field[hidden] { display: none; }
 .field label { font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: var(--tracking-label); }
 
 input[type=text], input[type=email], input[type=password], input[type=number], input[type=url], select, textarea {
@@ -381,6 +382,18 @@ tr:hover td { background: var(--green-050); }
 .toast-item.toast-error { background: var(--danger-solid); }
 
 .hint { color: var(--text-muted); font-size: 12px; margin-top: 4px; }
+
+/* Settings that come from AB Apps, and this computer's own ones folded away under them. */
+.shared-note {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  background: var(--surface-card-alt);
+  border-left: 3px solid var(--border-rule);
+  border-radius: var(--radius-control);
+  font-size: 13px;
+}
+details.own-settings { margin-bottom: 12px; }
+details.own-settings > summary { cursor: pointer; color: var(--text-muted); font-size: 13px; margin-bottom: 8px; }
 
 .rte-toolbar { display: flex; gap: 4px; margin-bottom: 6px; }
 .rte-btn {

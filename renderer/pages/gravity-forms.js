@@ -3,6 +3,9 @@
 window.Pages["gravity-forms"] = {
   async render(container) {
     let [connections, mailings] = await Promise.all([window.api.listGravityForms(), window.api.listMailings()]);
+    // While a manager has set the website in AB Apps, every connection uses
+    // its address and key, so those fields are hidden here.
+    const shared = await window.api.sharedWebsite();
     let editingId = null;
     let discoveredForms = [];
 
@@ -18,22 +21,24 @@ window.Pages["gravity-forms"] = {
         </p>
 
         <h2 style="margin-top:0" id="form-title">New connection</h2>
+        ${shared ? `<p class="shared-note">Connections use the website a manager set in AB Apps, <strong>${escapeHtml(shared.siteUrl)}</strong>,
+          and its key. A manager changes it on AB Apps' Mail and website page.</p>` : ""}
         <div class="row">
           <div class="field" style="flex:1">
             <label>Connection name</label>
             <input type="text" id="gf-name" placeholder="e.g. Church website" />
           </div>
-          <div class="field" style="flex:1">
+          <div class="field" style="flex:1" ${shared ? "hidden" : ""}>
             <label>Site URL</label>
             <input type="url" id="gf-site-url" placeholder="https://example.org" />
           </div>
         </div>
         <div class="row">
-          <div class="field" style="flex:1">
+          <div class="field" style="flex:1" ${shared ? "hidden" : ""}>
             <label>Consumer key</label>
             <input type="text" id="gf-key" />
           </div>
-          <div class="field" style="flex:1">
+          <div class="field" style="flex:1" ${shared ? "hidden" : ""}>
             <label>Consumer secret</label>
             <input type="password" id="gf-secret" placeholder="(leave blank to keep current when editing)" />
           </div>
@@ -116,7 +121,7 @@ window.Pages["gravity-forms"] = {
       const siteUrl = qs("#gf-site-url", container).value.trim();
       const key = qs("#gf-key", container).value.trim();
       const secret = qs("#gf-secret", container).value.trim();
-      if (!siteUrl || !key || !secret) {
+      if (!shared && (!siteUrl || !key || !secret)) {
         toast("Enter site URL, consumer key, and consumer secret first.", true);
         return;
       }
@@ -200,17 +205,20 @@ window.Pages["gravity-forms"] = {
       const memberIdFieldId = qs("#gf-member-id-field-id", container).value.trim();
       const nameFieldId = qs("#gf-name-field-id", container).value.trim();
 
-      if (!name || !siteUrl || !consumerKey || !formId || !pageUrl || !tokenFieldId) {
-        toast("Fill in name, site URL, consumer key, form ID, page URL, and token field ID.", true);
+      if (!name || (!shared && (!siteUrl || !consumerKey)) || !formId || !pageUrl || !tokenFieldId) {
+        toast(`Fill in name, ${shared ? "" : "site URL, consumer key, "}form ID, page URL, and token field ID.`, true);
         return;
       }
-      if (!editingId && !consumerSecret) {
+      if (!shared && !editingId && !consumerSecret) {
         toast("Consumer secret is required for a new connection.", true);
         return;
       }
 
-      const data = { name, siteUrl, consumerKey, formId, pageUrl, tokenParamName, tokenFieldId, memberIdFieldId, nameFieldId };
-      if (consumerSecret) data.consumerSecret = consumerSecret;
+      // A connection made while AB Apps shares the website keeps no address or
+      // key of its own; one made before keeps its own, for if that's cleared.
+      const data = { name, formId, pageUrl, tokenParamName, tokenFieldId, memberIdFieldId, nameFieldId };
+      if (!shared) Object.assign(data, { siteUrl, consumerKey });
+      if (!shared && consumerSecret) data.consumerSecret = consumerSecret;
 
       if (editingId) {
         await window.api.updateGravityForm(editingId, data);

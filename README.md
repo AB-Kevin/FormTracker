@@ -22,6 +22,13 @@ A desktop tool to send form requests to a mailing list — by email or paper mai
 - A way to send through SMTP: either an email account (e.g. a Gmail account with an [app password](https://myaccount.google.com/apppasswords)), or an unauthenticated relay your IT team sets up (e.g. an IP-allowlisted connector on a static IP) — for the latter, leave **SMTP username/password blank in Settings** and fill in **From email**, since there's no username for it to default to.
 - A Gravity Forms form on a WordPress site you control, for recipients to fill out online (see setup below). Paper and emailed-PDF responses don't need this.
 
+## Settings from AB Apps
+
+While someone is signed in to [AB Apps](https://github.com/AB-Kevin/ab-apps) and a manager has set them on its **Mail and website** page, FormTracker uses AB Apps' mail server and website instead of its own (`lib/abApps.js`):
+
+- **Mail** goes through AB Apps' server, without signing in, from its From name and address. **Settings** shows it, with this computer's own SMTP settings folded away under it for when AB Apps doesn't set one. The test email address stays per computer.
+- **Gravity Forms** connections use AB Apps' website address and read-only key. Each connection still keeps its form ID, page URL and field IDs, and the address and key fields are hidden.
+
 ## Getting started
 
 ```
@@ -40,7 +47,7 @@ FormTracker doesn't host the web form itself — it uses a form already on your 
 1. **Add a hidden token field.** In the Gravity Forms form editor, add a hidden field. In its settings, turn on **Allow field to be populated dynamically** and set a parameter name (FormTracker defaults to `rtoken`). Note the field's **Field ID** (shown in the field settings) — you'll need it below.
 2. **Enable the REST API.** Under *Gravity Forms → Settings → REST API*, enable the API and turn on **Basic Authentication** (your site must be HTTPS). Create a new API key with at least read access, and note the **Consumer Key** and **Consumer Secret**.
 3. **Note the form ID and page URL.** The form's numeric ID is visible in the Forms list. Note the public page URL where the form is embedded.
-4. In FormTracker, go to **Gravity Forms**, fill in the site URL and consumer key/secret, click **Test connection** to confirm and pick the form, then fill in the page URL, token parameter name, and the hidden field's ID.
+4. In FormTracker, go to **Gravity Forms**, fill in the site URL and consumer key/secret (unless AB Apps sets them), click **Test connection** to confirm and pick the form, then fill in the page URL, token parameter name, and the hidden field's ID.
 5. *(Optional)* If the form asks for a member ID, also fill in that field's ID as **Member ID field ID**. Submissions without a token (e.g. from a plain link to the form) are then matched against the contacts' ID column — ignoring case and spacing, and treating look-alike characters such as O/0 and I/L/1 as the same when that still points to exactly one member.
 
 FormTracker never needs an inbound connection to your computer — it only reaches out to the Gravity Forms REST API, on a 5-minute timer or when you click **Sync Gravity Forms now** on the Tracking page, to pull in new submissions and match them to recipients. Only submissions made after a mailing was created are considered. Anything that can't be matched with confidence is listed under **Online responses to match** on the Tracking page, with suggested members, to match by hand or dismiss.

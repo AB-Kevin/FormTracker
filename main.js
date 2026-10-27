@@ -18,6 +18,7 @@ const mailer = require("./lib/mailer");
 const gravityForms = require("./lib/gravityForms");
 const entryView = require("./lib/entryView");
 const { generateToken } = require("./lib/tokens");
+const { sharedServices } = require("./lib/abApps");
 
 const SYNC_INTERVAL_MS = 5 * 60 * 1000;
 let mainWindow = null;
@@ -54,6 +55,16 @@ function decryptSecret(stored) {
 // data folder could be shared, still works on the computer that saved it.
 function gfConsumerSecret(gf) {
   return decryptSecret(store.getSettings().gfSecrets?.[gf.id]) || decryptSecret(gf.consumerSecret);
+}
+
+// While a manager has set the website in AB Apps, every connection uses its
+// address and read-only key instead of its own; each connection still keeps
+// its form, page and field IDs.
+const sharedWebsite = () => sharedServices(app.getPath("appData")).website;
+
+function gfConfig(gf) {
+  const website = sharedWebsite();
+  return website ? { ...gf, ...website } : { ...gf, consumerSecret: gfConsumerSecret(gf) };
 }
 
 function saveGfConsumerSecret(gfId, plainText) {
@@ -301,13 +312,27 @@ handleEdit("templates:pick-pdf", async () => {
 // Gravity Forms connections
 // ---------------------------------------------------------------------------
 
-ipcMain.handle("gf:list", async () =>
-  store.list("gravityForms").map((gf) => ({ ...gf, consumerSecret: undefined, hasSecret: !!gfConsumerSecret(gf) }))
-);
+ipcMain.handle("gf:list", async () => {
+  const website = sharedWebsite();
+  return store.list("gravityForms").map((gf) => ({
+    ...gf,
+    siteUrl: website ? website.siteUrl : gf.siteUrl,
+    consumerSecret: undefined,
+    hasSecret: !!website || !!gfConsumerSecret(gf),
+  }));
+});
 
-ipcMain.handle("gf:test-connection", async (event, siteUrl, consumerKey, consumerSecret) =>
-  gravityForms.testConnection(siteUrl, consumerKey, consumerSecret)
-);
+// The website AB Apps shares, without its key, or null.
+ipcMain.handle("gf:shared-website", async () => {
+  const website = sharedWebsite();
+  return website && { siteUrl: website.siteUrl };
+});
+
+ipcMain.handle("gf:test-connection", async (event, siteUrl, consumerKey, consumerSecret) => {
+  const website = sharedWebsite();
+  if (website) return gravityForms.testConnection(website.siteUrl, website.consumerKey, website.consumerSecret);
+  return gravityForms.testConnection(siteUrl, consumerKey, consumerSecret);
+});
 
 handleEdit("gf:create", async (event, data) => {
   const { consumerSecret, ...rest } = data;
@@ -341,6 +366,7 @@ ipcMain.handle("settings:get", async () => {
     hasSmtpPassword: !!settings.smtpPassword,
     testEmail: settings.testEmail || "",
     theme: savedTheme(),
+    sharedMail: sharedMail(),
   };
 });
 
@@ -367,7 +393,14 @@ ipcMain.handle("settings:save-smtp", async (event, data) => {
   return true;
 });
 
+// While a manager has set the mail server in AB Apps, FormTracker sends
+// through it, without signing in, and this computer's own SMTP settings wait
+// unused until it's cleared there.
+const sharedMail = () => sharedServices(app.getPath("appData")).mail;
+
 function resolveSmtpConfig() {
+  const mail = sharedMail();
+  if (mail) return { ...mail, user: "", password: "" };
   const s = store.getSettings();
   return {
     host: s.smtpHost,
@@ -908,7 +941,8 @@ ipcMain.handle("tracking:export-paper-addresses", async (event, recipientIds) =>
 // The entry's page in the WordPress admin, for seeing it exactly as
 // Gravity Forms shows it.
 function gfEntryUrl(gf, entryId) {
-  return `${gf.siteUrl.replace(/\/+$/, "")}/wp-admin/admin.php?page=gf_entries&view=entry&id=${encodeURIComponent(gf.formId)}&lid=${encodeURIComponent(entryId)}`;
+  const siteUrl = sharedWebsite()?.siteUrl || gf.siteUrl;
+  return `${siteUrl.replace(/\/+$/, "")}/wp-admin/admin.php?page=gf_entries&view=entry&id=${encodeURIComponent(gf.formId)}&lid=${encodeURIComponent(entryId)}`;
 }
 
 // Skipped in the read-only view; the editor's next sync caches it.
@@ -957,7 +991,7 @@ async function syncGravityForms() {
     const recipients = store.list("mailingRecipients").filter((r) => linkedMailings.has(r.mailingId));
     if (recipients.length === 0) continue;
 
-    const config = { ...gf, consumerSecret: gfConsumerSecret(gf) };
+    const config = gfConfig(gf);
     if (!config.consumerSecret) {
       summary.errors.push(`${gf.name}: no consumer secret saved on this computer -- enter it on the Gravity Forms page`);
       continue;
@@ -1127,7 +1161,7 @@ async function loadFormFields(gf) {
   const cached = store.list("gfForms").find((f) => f.gravityFormId === gf.id);
   if (cached) return cached.fields;
   try {
-    const form = await gravityForms.fetchForm({ ...gf, consumerSecret: gfConsumerSecret(gf) });
+    const form = await gravityForms.fetchForm(gfConfig(gf));
     cacheFormFields(gf.id, form);
     return entryView.trimFormFields(form);
   } catch (err) {

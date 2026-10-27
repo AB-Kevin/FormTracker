@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld("api", {
   pickPdfTemplate: () => ipcRenderer.invoke("templates:pick-pdf"),
 
   listGravityForms: () => ipcRenderer.invoke("gf:list"),
+  sharedWebsite: () => ipcRenderer.invoke("gf:shared-website"),
   testGfConnection: (siteUrl, consumerKey, consumerSecret) =>
     ipcRenderer.invoke("gf:test-connection", siteUrl, consumerKey, consumerSecret),
   createGravityForm: (data) => ipcRenderer.invoke("gf:create", data),

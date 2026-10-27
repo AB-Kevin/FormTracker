@@ -1,5 +1,12 @@
 "use strict";
 
+// The mail server AB Apps shares, when a manager has set one there.
+function sharedMailNote(mail) {
+  const from = mail.fromName ? `${mail.fromName} <${mail.fromEmail}>` : mail.fromEmail;
+  return `<p class="shared-note">Mail goes through the server a manager set in AB Apps: <strong>${escapeHtml(mail.host)}</strong>, port ${mail.port},
+          from ${escapeHtml(from)}. A manager changes it on AB Apps' Mail and website page.</p>`;
+}
+
 function describeDataMode(state) {
   if (state.mode === "editing") return "You're editing this data. Anyone else who opens it now gets a read-only view.";
   if (state.mode === "unavailable") return "This folder can't be reached right now.";
@@ -15,10 +22,12 @@ window.Pages.settings = {
 
     container.innerHTML = `
       <h1>Settings</h1>
-      <p class="subtitle">Emails are sent through your own email account via SMTP. These settings are saved on this computer only.</p>
+      <p class="subtitle">Emails are sent over SMTP, through the mail server a manager set in AB Apps or, without one, the server set here on this computer.</p>
 
       <div class="panel">
         <h2 style="margin-top:0">SMTP</h2>
+        ${settings.sharedMail ? `${sharedMailNote(settings.sharedMail)}
+        <details class="own-settings"><summary>This computer's own SMTP settings, used when AB Apps doesn't set a server</summary>` : ""}
         <div class="row">
           <div class="field" style="flex:1">
             <label>SMTP host</label>
@@ -57,6 +66,7 @@ window.Pages.settings = {
             <input type="email" id="from-email" value="${escapeHtml(settings.fromEmail)}" placeholder="defaults to SMTP username" />
           </div>
         </div>
+        ${settings.sharedMail ? "</details>" : ""}
         <div class="row">
           <div class="field" style="flex:1">
             <label>Test email address</label>
@@ -84,8 +94,8 @@ window.Pages.settings = {
           To share the data with your team, copy everything in this folder except settings.json into a OneDrive or
           SharePoint folder everyone syncs, and choose that folder here — then choose it on each other computer too.
           Only one person can edit at a time; anyone else with FormTracker open sees it read-only.
-          SMTP settings, the test email address, the theme, and Gravity Forms consumer secrets aren't shared, so each person
-          enters their own here and on the Gravity Forms page.
+          SMTP settings, the test email address, the theme, and Gravity Forms consumer secrets aren't in this folder: each person
+          enters their own here and on the Gravity Forms page, unless a manager sets the mail server and website in AB Apps.
         </p>
       </div>
 
