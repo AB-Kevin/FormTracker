@@ -18,7 +18,7 @@ const mailer = require("./lib/mailer");
 const gravityForms = require("./lib/gravityForms");
 const entryView = require("./lib/entryView");
 const { generateToken } = require("./lib/tokens");
-const { sharedServices } = require("./lib/abApps");
+const { readIdentity, watchIdentity, sharedServices } = require("./lib/abApps");
 
 const SYNC_INTERVAL_MS = 5 * 60 * 1000;
 let mainWindow = null;
@@ -145,6 +145,9 @@ app.whenReady().then(() => {
   });
   dataLock.onStateChange(() => sendToWindow("data:state", dataFolderState()));
   dataLock.onExternalChange(() => sendToWindow("data:changed"));
+  // Others see who is editing by the name signed in to AB Apps, when there is one.
+  dataLock.setUser(readIdentity(app.getPath("appData"))?.name);
+  watchIdentity(app.getPath("appData"), (identity) => dataLock.setUser(identity?.name));
   dataLock.start(store.getDataDir());
   nativeTheme.themeSource = savedTheme();
   createWindow();

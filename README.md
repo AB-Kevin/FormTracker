@@ -24,7 +24,9 @@ A desktop tool to send form requests to a mailing list — by email or paper mai
 
 ## Settings from AB Apps
 
-While someone is signed in to [AB Apps](https://github.com/AB-Kevin/ab-apps) and a manager has set them on its **Mail and website** page, FormTracker uses AB Apps' mail server and website instead of its own (`lib/abApps.js`):
+While someone is signed in to [AB Apps](https://github.com/AB-Kevin/ab-apps), the editing lock carries their AB Apps name instead of the Windows user name, so the read-only view says who is editing by name. Signing in or out there shows up within a few seconds.
+
+While someone is signed in and a manager has set them on AB Apps' **Mail and website** page, FormTracker also uses AB Apps' mail server and website instead of its own (`lib/abApps.js`):
 
 - **Mail** goes through AB Apps' server, without signing in, from its From name and address. **Settings** shows it, with this computer's own SMTP settings folded away under it for when AB Apps doesn't set one. The test email address stays per computer.
 - **Gravity Forms** connections use AB Apps' website address and read-only key. Each connection still keeps its form ID, page URL and field IDs, and the address and key fields are hidden.
