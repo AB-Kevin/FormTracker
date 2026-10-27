@@ -19,6 +19,7 @@ const gravityForms = require("./lib/gravityForms");
 const entryView = require("./lib/entryView");
 const { generateToken } = require("./lib/tokens");
 const { readIdentity, watchIdentity, sharedServices } = require("./lib/abApps");
+const { isSensitive, withoutSensitive } = require("./lib/sensitiveColumns");
 
 const SYNC_INTERVAL_MS = 5 * 60 * 1000;
 let mainWindow = null;
@@ -143,7 +144,10 @@ app.whenReady().then(() => {
   store.setWriteGuard(() => {
     if (!dataLock.isEditing()) dataLock.assertEditing();
   });
-  dataLock.onStateChange(() => sendToWindow("data:state", dataFolderState()));
+  dataLock.onStateChange((state) => {
+    if (state.mode === "editing") removeSensitiveColumns();
+    sendToWindow("data:state", dataFolderState());
+  });
   dataLock.onExternalChange(() => sendToWindow("data:changed"));
   // Others see who is editing by the name signed in to AB Apps, when there is one.
   dataLock.setUser(readIdentity(app.getPath("appData"))?.name);
@@ -195,9 +199,11 @@ ipcMain.handle("dialog:pick-import-file", async () => {
   return result.filePaths[0];
 });
 
+// Sensitive columns (lib/sensitiveColumns.js) aren't offered, and the page
+// says they're left out.
 ipcMain.handle("import:preview", async (event, filePath) => {
   const { headers, rows } = csvImport.parseFile(filePath);
-  return { headers, sampleRows: rows.slice(0, 20), totalRows: rows.length };
+  return { headers: headers.filter((h) => !isSensitive(h)), leftOut: headers.filter(isSensitive), sampleRows: rows.slice(0, 20), totalRows: rows.length };
 });
 
 handleEdit("import:commit", async (event, filePath, mapping, batchName) => {
@@ -212,12 +218,25 @@ handleEdit("import:commit", async (event, filePath, mapping, batchName) => {
   for (const contact of contacts) {
     const existing = contact.externalId ? existingById.get(contact.externalId) : null;
     if (!existing) continue;
-    contact.extra = { ...existing.extra, ...contact.extra };
+    contact.extra = withoutSensitive({ ...existing.extra, ...contact.extra });
     if (existing.removedAt) stillRemoved++;
   }
   const { inserted, updated } = store.upsertMany("contacts", "externalId", contacts);
   return { count: contacts.length, inserted, updated, stillRemoved };
 });
+
+// Contacts imported before FormTracker left out sensitive columns still have
+// them; they're removed the first time this computer edits. OneDrive's
+// version history keeps the files as they were before.
+function removeSensitiveColumns() {
+  try {
+    const hasSome = (c) => Object.keys(c.extra || {}).some(isSensitive);
+    if (!store.list("contacts").some(hasSome)) return;
+    store.updateWhere("contacts", (c) => hasSome(c) && { extra: withoutSensitive(c.extra) });
+  } catch (err) {
+    console.error("Couldn't remove sensitive columns:", err);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Fields from a linked list (lib/fieldImport.js)
@@ -226,7 +245,8 @@ handleEdit("import:commit", async (event, filePath, mapping, batchName) => {
 ipcMain.handle("field-import:preview", async (event, filePath) => {
   const { headers, rows } = csvImport.parseFileAsText(filePath);
   return {
-    headers,
+    headers: headers.filter((h) => !isSensitive(h)),
+    leftOut: headers.filter(isSensitive),
     sampleRows: rows.slice(0, 20),
     totalRows: rows.length,
     savedConfig: store.getSettings().fieldImport || null,

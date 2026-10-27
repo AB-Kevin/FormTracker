@@ -57,6 +57,7 @@ FormTracker never needs an inbound connection to your computer — it only reach
 ## Typical workflow
 
 1. **Import List** — upload your CSV/spreadsheet, map columns, import. Then, if needed, **Add fields from a linked list** (e.g. Over 65), and remove test or inactive contacts on **Contacts**.
+   Identity and health columns from the membership software (Last4SSN, accident, pre-existing condition, Medicare, disability and Social Security exemption details) are never kept: the import screens list them as left out, and contacts imported earlier lose them the first time a computer edits. OneDrive's version history still holds the files as they were, and the export files themselves aren't touched (`lib/sensitiveColumns.js`).
 2. **Templates** — create one email template and one paper template. Use `{{externalId}}`, `{{name}}`, `{{email}}`, `{{addressLine1}}`, `{{form_link}}`, or `{{extra.ColumnName}}` for any other imported column. Attach a fillable PDF to the email template.
 3. **Gravity Forms** — register your form connection (one-time, see above).
 4. **Settings** — enter your SMTP details and send a test. **Appearance** there switches between light and dark, or matches Windows.

@@ -1,5 +1,11 @@
 "use strict";
 
+// Says which of the file's columns FormTracker leaves out (lib/sensitiveColumns.js).
+function leftOutNote(preview) {
+  if (!preview.leftOut?.length) return "";
+  return `<p class="hint">Left out, since FormTracker never keeps identity or health details: ${preview.leftOut.map(escapeHtml).join(", ")}.</p>`;
+}
+
 const CORE_FIELD_OPTIONS = [
   { value: "", label: "Keep as extra field" },
   { value: "externalId", label: "ID" },
@@ -105,6 +111,7 @@ function renderContactImport(container) {
               .join("")}
           </tbody>
         </table>
+        ${leftOutNote(preview)}
         <p class="hint">Rows without a value mapped to Email will be treated as paper mailings.</p>
         <p class="hint">Rows whose ID matches an existing contact update that contact in place instead of adding a duplicate.
           Fields added from a linked list are kept; new contacts get them when that list is added again.</p>
@@ -257,6 +264,7 @@ function renderFieldImport(container) {
             Contacts with no matching row, or whose birthdate can't be read, are left blank.</p>
         </div>
         <h2>Also copy these columns</h2>
+        ${leftOutNote(preview)}
         <div class="copy-columns">
           ${preview.headers
             .map(
