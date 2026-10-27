@@ -75,15 +75,25 @@ window.Pages.settings = {
 
       <div class="panel">
         <h2 style="margin-top:0">Data location</h2>
-        <p class="hint">Imported contacts, templates, generated PDFs, and tracking data are stored here${dataState.isDefault ? " (this computer's own folder)" : ""}:</p>
+        <p class="hint">Imported contacts, templates, generated PDFs, and tracking data are stored here${
+          dataState.folder?.reason === "ab-apps" ? " — FormTracker's subfolder of the AB Apps folder, which every computer finds by itself" : dataState.isDefault ? " (this computer's own folder)" : ""
+        }:</p>
         <div class="row">
           <code>${escapeHtml(dataState.dataDir)}</code>
           <button class="btn secondary" id="open-data-dir-btn" type="button">Open folder</button>
-          <button class="btn secondary" id="change-data-dir-btn" type="button">Change folder…</button>
-          ${dataState.isDefault ? "" : `<button class="btn secondary" id="default-data-dir-btn" type="button">Use this computer's folder</button>`}
+          ${dataState.folder?.reason === "ab-apps" ? "" : `<button class="btn secondary" id="change-data-dir-btn" type="button">Change folder…</button>`}
+          ${dataState.isDefault || dataState.folder?.reason === "ab-apps" ? "" : `<button class="btn secondary" id="default-data-dir-btn" type="button">Use this computer's folder</button>`}
         </div>
+        ${
+          dataState.folder?.reason === "not-moved"
+            ? `<p class="shared-note">FormTracker's data belongs in the AB Apps folder now, where every computer finds it by itself: <strong>${escapeHtml(dataState.folder.target)}</strong>.
+          Moving it copies everything there; this folder is kept as it was, and every other computer switches over on its own.
+          ${dataState.folder.canMove ? "" : "A manager can move it, on the host computer."}</p>
+          ${dataState.folder.canMove ? `<div class="row"><button class="btn" id="move-data-btn" type="button">Move to the AB Apps folder</button></div>` : ""}`
+            : ""
+        }
         ${dataState.available ? "" : `<p class="hint" style="color:var(--danger)">This folder can't be reached right now.</p>`}
-        <p class="hint">
+        <p class="hint" ${dataState.folder?.reason === "own" ? "" : "hidden"}>
           To share the data with your team, copy everything in this folder except settings.json into a OneDrive or
           SharePoint folder everyone syncs, and choose that folder here — then choose it on each other computer too.
           SMTP settings, the test email address, the theme, and Gravity Forms consumer secrets aren't in this folder: each person
@@ -161,7 +171,18 @@ window.Pages.settings = {
 
     qs("#open-data-dir-btn", container).addEventListener("click", () => window.api.openPath(dataState.dataDir));
 
-    qs("#change-data-dir-btn", container).addEventListener("click", async () => {
+    qs("#move-data-btn", container)?.addEventListener("click", async () => {
+      try {
+        const result = await window.api.moveDataToAbApps();
+        if (!result) return;
+        toast(`Moved: ${plural(result.files, "file")} are in the AB Apps folder now.`);
+        navigate("settings");
+      } catch (err) {
+        toast(err.message, true);
+      }
+    });
+
+    qs("#change-data-dir-btn", container)?.addEventListener("click", async () => {
       const next = await window.api.chooseDataFolder();
       if (!next) return;
       toast(`Now using ${next.dataDir}.`);

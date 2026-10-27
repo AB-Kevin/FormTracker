@@ -10,6 +10,7 @@ const { randomUUID } = require("crypto");
 const store = require("./db/store");
 const { Team, readPeople, isActive, activeHosts } = require("./lib/team");
 const legacyLock = require("./lib/legacyLock");
+const { appFolder, samePath, chooseFolder, readMovedNote, moveToAbApps } = require("ab-common/appfolder");
 const csvImport = require("./lib/csvImport");
 const { filterContacts, activeContacts, listFilterableFields } = require("./lib/filter");
 const fieldImport = require("./lib/fieldImport");
@@ -146,11 +147,14 @@ app.whenReady().then(() => {
     if (!actingHost) throw new Error("Only the host computer saves the shared files.");
   });
   abIdentity = readIdentity(app.getPath("appData"));
+  choosePlace();
   legacyLock.setUser(shownName());
   openTeam();
   // Signing in or out of AB Apps, or a manager's rename there, reaches the others right away.
   watchIdentity(app.getPath("appData"), (next) => {
+    const folderChanged = next?.dataDir !== abIdentity?.dataDir;
     abIdentity = next;
+    if (folderChanged) followToAbApps();
     legacyLock.setUser(shownName());
     try {
       team?.setName(shownName(), abIdentity?.personId ?? null);
@@ -198,6 +202,61 @@ let team = null;
 let actingHost = false;
 // Who is signed in to AB Apps on this computer, or null.
 let abIdentity = null;
+
+// ---- where the data is ----
+// FormTracker's data lives in the FormTracker subfolder of the AB Apps folder
+// (ab-common's appfolder.js). Data that's still somewhere else stays there
+// until a manager on the host computer moves it from Settings; every other
+// computer follows the note the move leaves.
+const FOLDER_NAME = "FormTracker";
+let folderChoice = { reason: "own", target: null };
+
+function abAppsTarget() {
+  return abIdentity?.dataDir && fs.existsSync(abIdentity.dataDir) ? appFolder(abIdentity, FOLDER_NAME) : null;
+}
+
+// Works out where the data is, and when that's the AB Apps subfolder but this
+// computer uses another, points it there. Returns whether it changed.
+function choosePlace() {
+  const own = store.getDataDir();
+  const target = abAppsTarget();
+  folderChoice = { ...chooseFolder({ own, target, hasData: hasFormTrackerData }), target };
+  if (folderChoice.reason !== "ab-apps" || samePath(own, folderChoice.dir)) return false;
+  fs.mkdirSync(folderChoice.dir, { recursive: true });
+  // This computer's own changes made between the move's copy and now are only
+  // in the old folder; its changes file has one writer -- this computer.
+  const mine = store.getSettings().personId;
+  if (mine && readMovedNote(own)) {
+    for (const name of [`${mine}.json`, `${mine}.changes.json`]) {
+      const a = path.join(own, "people", name);
+      const b = path.join(folderChoice.dir, "people", name);
+      try {
+        if (fs.existsSync(a) && (!fs.existsSync(b) || fs.statSync(a).mtimeMs > fs.statSync(b).mtimeMs)) {
+          fs.mkdirSync(path.dirname(b), { recursive: true });
+          fs.copyFileSync(a, b);
+        }
+      } catch {
+        // Left in the old folder; nothing there is removed.
+      }
+    }
+  }
+  store.updateSettings({ dataDir: folderChoice.dir });
+  store.setDataDir(folderChoice.dir);
+  return true;
+}
+
+// Re-opens the data in the AB Apps subfolder, once the data is there.
+function followToAbApps() {
+  const from = store.getDataDir();
+  if (!team) return;
+  team.close();
+  store.setJournal(null);
+  legacyLock.stop();
+  actingHost = false;
+  const moved = choosePlace();
+  openTeam();
+  if (moved) dataChanged(`FormTracker's data moved to the AB Apps folder (from ${from}).`);
+}
 
 // Who is using this computer, set up the first time this version runs: the
 // host, unless the folder already has one open.
@@ -282,6 +341,10 @@ function watchTeam() {
   // Someone arrived, left, or sent changes: re-check who's host, and as
   // host, save what's new.
   team.on("people", () => updateRole());
+  // A manager moved the data while this computer had it open: follow it.
+  team.on("tick", () => {
+    if (folderChoice.reason === "not-moved" && readMovedNote(store.getDataDir())) followToAbApps();
+  });
   // The host saved (or an older FormTracker changed something): everyone
   // else shows it.
   team.on("shared", () => {
@@ -321,6 +384,9 @@ function teamStatus() {
     abApps: abIdentity && { name: abIdentity.name },
     isHost: !!settings.isHost,
     conflicts: team?.dataDir ? store.findConflictCopies(store.getDataDir()) : [],
+    // Where the data is: "ab-apps", "own", or "not-moved" with where it belongs,
+    // and whether this computer can move it (the host, with a manager signed in).
+    folder: { reason: folderChoice.reason, target: folderChoice.target, canMove: actingHost && abIdentity?.class === "manager" },
   };
   if (!team?.dataDir) return { ...base, role: "unavailable", host: null, otherHosts: [], people: [], unsaved: 0, olderEditor: null };
   const now = Date.now();
@@ -1526,6 +1592,42 @@ ipcMain.handle("app:get-version", async () => app.getVersion());
 
 // Where the data is, and who else is using it (the Settings page).
 ipcMain.handle("data:get-state", async () => teamStatus());
+
+// A manager on the host moves the data into the AB Apps folder, once, after
+// saving everyone's waiting changes. Every other computer follows the note it
+// leaves, and the old folder is kept as it was.
+ipcMain.handle("data:move-to-ab-apps", async () => {
+  if (folderChoice.reason !== "not-moved") throw new Error("FormTracker's data is already in the AB Apps folder.");
+  requireHost("moves the data");
+  if (abIdentity?.class !== "manager") throw new Error("Only a manager can move the data.");
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: "question",
+    buttons: ["Move", "Cancel"],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+    message: "Move FormTracker's data to the AB Apps folder?",
+    detail: `Everything in ${store.getDataDir()} is copied to ${folderChoice.target}, and every computer uses it from there. The current folder is left as it was, as a backup you can delete later.`,
+  });
+  if (mainWindow) mainWindow.webContents.focus();
+  if (response !== 0) return null;
+  await syncInFlight?.catch(() => {});
+  saveIncoming();
+  const from = store.getDataDir();
+  const to = folderChoice.target;
+  team.close();
+  store.setJournal(null);
+  legacyLock.stop();
+  actingHost = false;
+  let files;
+  try {
+    files = moveToAbApps({ from, to, folder: FOLDER_NAME, by: abIdentity.name, skip: ["settings.json", "formtracker.lock"] });
+  } finally {
+    choosePlace();
+    openTeam();
+  }
+  return { files, status: teamStatus() };
+});
 
 function hasFormTrackerData(dir) {
   return ["contacts.json", "mailings.json"].some((file) => fs.existsSync(path.join(dir, file)));

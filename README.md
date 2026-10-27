@@ -43,6 +43,8 @@ All data (contacts, templates, generated PDFs/letters, and tracking records) is 
 
 To share it with a team, copy the data folder's contents (all but `settings.json`) into a OneDrive/SharePoint folder everyone syncs and choose that folder under **Settings → Data location** on each computer. SMTP settings, the theme, and Gravity Forms consumer secrets stay on each computer.
 
+**In the AB Apps folder.** While someone is signed in to [AB Apps](https://github.com/AB-Kevin/ab-apps), FormTracker keeps its data in its `FormTracker` subfolder of the AB Apps folder, and every computer finds it there by itself, so nobody chooses a folder. Its data that's still somewhere else stays there until a manager, on the host computer, moves it once, from Settings with **Move to the AB Apps folder**: it's copied into the subfolder, the old folder is kept as it was, and a note left there sends every other computer along within a minute or so. Without AB Apps, the folder is chosen as below. The host saves everyone's waiting changes first.
+
 ### Sharing a data folder
 
 Several computers can work on the data at once, the same way as in SendNewsletters (`lib/team.js`):

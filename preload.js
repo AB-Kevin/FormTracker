@@ -79,6 +79,7 @@ contextBridge.exposeInMainWorld("api", {
 
   getDataState: () => ipcRenderer.invoke("data:get-state"),
   getTeamStatus: () => ipcRenderer.invoke("team:status"),
+  moveDataToAbApps: () => ipcRenderer.invoke("data:move-to-ab-apps"),
   saveTeamSettings: (data) => ipcRenderer.invoke("team:save", data),
   chooseDataFolder: () => ipcRenderer.invoke("data:choose-folder"),
   useDefaultDataFolder: () => ipcRenderer.invoke("data:use-default-folder"),
