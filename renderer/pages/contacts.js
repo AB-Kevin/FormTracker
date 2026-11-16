@@ -15,6 +15,7 @@ window.Pages.contacts = {
 
     container.innerHTML = `
       <h1>Contacts</h1>
+      ${listFromMemberManager() ? memberManagerNote("Remove takes someone off FormTracker's mailings only.") : ""}
       <p class="subtitle" id="contacts-summary"></p>
       <div class="panel">
         <div class="row" style="align-items:flex-end">

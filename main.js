@@ -21,6 +21,8 @@ const mailer = require("./lib/mailer");
 const gravityForms = require("./lib/gravityForms");
 const entryView = require("./lib/entryView");
 const { generateToken } = require("./lib/tokens");
+const memberList = require("ab-common/members");
+const { planSync } = require("./lib/fromMemberManager");
 const { readIdentity, watchIdentity, sharedServices } = require("./lib/abApps");
 const { isSensitive, withoutSensitive } = require("./lib/sensitiveColumns");
 
@@ -155,6 +157,7 @@ app.whenReady().then(() => {
     const folderChanged = next?.dataDir !== abIdentity?.dataDir;
     abIdentity = next;
     if (folderChanged) followToAbApps();
+    followMemberManager();
     legacyLock.setUser(shownName());
     try {
       team?.setName(shownName(), abIdentity?.personId ?? null);
@@ -300,6 +303,7 @@ function openTeam() {
   }
   team.open(store.getDataDir(), { isHost: !!me.isHost, hostSince: me.hostSince });
   updateRole();
+  followMemberManager();
 }
 
 // Works out whether this computer acts as host. The host then saves anything
@@ -314,8 +318,10 @@ function updateRole() {
     legacyLock.hold(acting);
     if (acting) removeSensitiveColumns();
   }
-  if (actingHost) saveIncoming();
-  else team.trim(store.isReflected);
+  if (actingHost) {
+    saveIncoming();
+    syncFromMemberManager();
+  } else team.trim(store.isReflected);
   sendTeamStatus();
 }
 
@@ -344,6 +350,7 @@ function watchTeam() {
   // A manager moved the data while this computer had it open: follow it.
   team.on("tick", () => {
     if (folderChoice.reason === "not-moved" && readMovedNote(store.getDataDir())) followToAbApps();
+    followMemberManager();
   });
   // The host saved (or an older FormTracker changed something): everyone
   // else shows it.
@@ -448,6 +455,80 @@ function handleEdit(channel, handler) {
 }
 
 // ---------------------------------------------------------------------------
+// Contacts from MemberManager
+// ---------------------------------------------------------------------------
+// MemberManager keeps the office's member list in its subfolder of the AB
+// Apps folder (ab-common's members.js). Once it has one, every member is a
+// contact here -- each member household's head, with their household's
+// address and MemberManager's fields as extra columns -- and the host keeps
+// the contacts up to date whenever MemberManager saves (lib/fromMemberManager.js).
+// Contacts are changed only in MemberManager from then on: Import List and
+// Add fields from a linked list step aside, and only Remove and Restore,
+// which are FormTracker's own, stay.
+//
+// `listFrom: "MemberManager"` in the shared settings records the switch, so
+// every computer knows, even one that can't see MemberManager's folder.
+
+let memberFolder = null;
+let stopWatchingMembers = null;
+
+const listFromMemberManager = () => store.getSettings().listFrom === "MemberManager";
+
+function requireOwnList() {
+  if (listFromMemberManager()) {
+    throw new Error("Contacts come from MemberManager now. Change them there, and they show here within a minute or so.");
+  }
+}
+
+function followMemberManager() {
+  const folder = memberList.memberListFolder(abIdentity);
+  if (folder !== memberFolder) {
+    stopWatchingMembers?.();
+    stopWatchingMembers = null;
+    memberFolder = folder;
+    if (folder) stopWatchingMembers = memberList.watchMemberList(folder, () => syncFromMemberManager());
+  }
+  syncFromMemberManager();
+}
+
+let lastSyncProblem = null;
+// Said once, when the window next asks (list:source): the switch happens at
+// startup, before there's a window to say it in.
+let memberManagerNotice = null;
+function syncFromMemberManager() {
+  if (!memberFolder || !actingHost || !team?.dataDir) return;
+  const list = memberList.readMemberList(memberFolder);
+  if (!list) return; // OneDrive is mid-sync; the next save or tick tries again
+  try {
+    const plan = planSync(store.list("contacts"), memberList.members(list), (id) => memberList.currentId(list, "contact", id));
+    if (plan.inserts.length) store.insertMany("contacts", plan.inserts);
+    if (plan.updates.length) {
+      const patches = new Map(plan.updates.map((u) => [u.id, u.patch]));
+      store.updateWhere("contacts", (c) => patches.get(c.id) || false);
+    }
+    const first = !listFromMemberManager();
+    if (first) store.updateSettings({ listFrom: "MemberManager", listFromSince: new Date().toISOString() });
+    lastSyncProblem = null;
+    if (first) {
+      memberManagerNotice =
+        `Contacts come from MemberManager now: ${plan.linked.toLocaleString()} linked to their member, ${plan.inserts.length.toLocaleString()} added` +
+        (plan.removed ? `, and ${plan.removed.toLocaleString()} that aren't in MemberManager removed` : "") +
+        ". Change them in MemberManager.";
+    }
+    if (first || plan.inserts.length || plan.updates.length) dataChanged(null);
+  } catch (err) {
+    if (lastSyncProblem !== err.message) console.error("Couldn't update contacts from MemberManager:", err);
+    lastSyncProblem = err.message;
+  }
+}
+
+ipcMain.handle("list:source", async () => {
+  const notice = memberManagerNotice;
+  memberManagerNotice = null;
+  return { memberManager: listFromMemberManager(), since: store.getSettings().listFromSince || null, reachable: !!memberFolder, notice };
+});
+
+// ---------------------------------------------------------------------------
 // Import
 // ---------------------------------------------------------------------------
 
@@ -464,11 +545,13 @@ ipcMain.handle("dialog:pick-import-file", async () => {
 // Sensitive columns (lib/sensitiveColumns.js) aren't offered, and the page
 // says they're left out.
 ipcMain.handle("import:preview", async (event, filePath) => {
+  requireOwnList();
   const { headers, rows } = csvImport.parseFile(filePath);
   return { headers: headers.filter((h) => !isSensitive(h)), leftOut: headers.filter(isSensitive), sampleRows: rows.slice(0, 20), totalRows: rows.length };
 });
 
 handleEdit("import:commit", async (event, filePath, mapping, batchName) => {
+  requireOwnList();
   const { rows } = csvImport.parseFile(filePath);
   const contacts = csvImport.buildContacts(rows, mapping, batchName || path.basename(filePath));
   // A contact updated by a re-import keeps the fields its file doesn't have
@@ -505,6 +588,7 @@ function removeSensitiveColumns() {
 // ---------------------------------------------------------------------------
 
 ipcMain.handle("field-import:preview", async (event, filePath) => {
+  requireOwnList();
   const { headers, rows } = csvImport.parseFileAsText(filePath);
   return {
     headers: headers.filter((h) => !isSensitive(h)),
@@ -523,6 +607,7 @@ function planFieldImportFromFile(filePath, config) {
 ipcMain.handle("field-import:check", async (event, filePath, config) => planFieldImportFromFile(filePath, config).stats);
 
 handleEdit("field-import:commit", async (event, filePath, config) => {
+  requireOwnList();
   const { updates, stats } = planFieldImportFromFile(filePath, config);
   store.updateWhere("contacts", (c) => updates.has(c.id) && { extra: { ...c.extra, ...updates.get(c.id) } });
   // Remembered on this computer so adding the next version of the file is
@@ -801,7 +886,7 @@ async function deliverToRecipient(recipient, contact, context) {
   try {
     if (recipient.channel === "email") {
       const message = await composeEmail(contact, recipient.responseToken, context);
-      await mailer.sendMail(smtpConfig, { to: contact.email, ...message });
+      await mailer.sendMail(smtpConfig, { to: recipient.email || contact.email, ...message });
       store.update("mailingRecipients", recipient.id, { status: "sent", sentAt: new Date().toISOString(), error: null });
       return "sent";
     }
@@ -1093,11 +1178,19 @@ handleEdit("tracking:retry-send", async (event, recipientId, email) => {
   if (!mailing || !contact) throw new Error("This recipient's mailing or contact no longer exists.");
 
   const cleaned = String(email || "").trim();
-  const nextContact = cleaned === contact.email ? contact : store.update("contacts", contact.id, { email: cleaned });
   const channel = cleaned ? "email" : "paper";
-  const nextRecipient = channel === recipient.channel ? recipient : store.update("mailingRecipients", recipient.id, { channel });
+  // With contacts from MemberManager, the corrected address is for this
+  // mailing only, kept on the recipient: the contact is changed there.
+  const fromMemberManager = listFromMemberManager();
+  const nextContact =
+    cleaned === contact.email ? contact : fromMemberManager ? { ...contact, email: cleaned } : store.update("contacts", contact.id, { email: cleaned });
+  const recipientPatch = {
+    ...(channel === recipient.channel ? {} : { channel }),
+    ...(fromMemberManager && cleaned !== contact.email ? { email: cleaned } : {}),
+  };
+  const nextRecipient = Object.keys(recipientPatch).length ? store.update("mailingRecipients", recipient.id, recipientPatch) : recipient;
   const outcome = await deliverToRecipient(nextRecipient, nextContact, loadSendContext(mailing));
-  return { outcome };
+  return { outcome, inMemberManager: fromMemberManager && cleaned !== contact.email };
 });
 
 // Emails the form again to recipients who were already sent it but haven't
@@ -1125,11 +1218,12 @@ handleEdit("tracking:resend", async (event, recipientIds) => {
     try {
       const mailing = mailingById.get(recipient.mailingId);
       if (!mailing || !contact) throw new Error("This recipient's mailing or contact no longer exists.");
-      if (!contact.email) throw new Error("This contact no longer has an email address.");
+      const to = recipient.email || contact.email; // a Fix & resend's address, with contacts from MemberManager
+      if (!to) throw new Error("This contact no longer has an email address.");
       if (!contextByMailing.has(mailing.id)) contextByMailing.set(mailing.id, loadSendContext(mailing));
       const context = contextByMailing.get(mailing.id);
       const message = await composeEmail(contact, recipient.responseToken, context);
-      await mailer.sendMail(context.smtpConfig, { to: contact.email, ...message });
+      await mailer.sendMail(context.smtpConfig, { to, ...message });
       store.update("mailingRecipients", recipient.id, { resentAt: new Date().toISOString() });
       results.sent++;
     } catch (err) {

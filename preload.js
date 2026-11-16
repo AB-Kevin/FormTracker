@@ -76,6 +76,8 @@ contextBridge.exposeInMainWorld("api", {
   showInFolder: (filePath) => ipcRenderer.invoke("shell:show-in-folder", filePath),
   openExternal: (url) => ipcRenderer.invoke("shell:open-external", url),
   getVersion: () => ipcRenderer.invoke("app:get-version"),
+  // { memberManager, since, reachable }: whether contacts come from MemberManager.
+  getListSource: () => ipcRenderer.invoke("list:source"),
 
   getDataState: () => ipcRenderer.invoke("data:get-state"),
   getTeamStatus: () => ipcRenderer.invoke("team:status"),

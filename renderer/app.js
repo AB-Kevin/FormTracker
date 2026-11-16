@@ -145,6 +145,28 @@ async function navigate(pageName) {
   }
 }
 
+// Once contacts come from MemberManager (main.js, "Contacts from
+// MemberManager"), they're changed only there: Import List steps aside.
+window.__listSource = { memberManager: false };
+const listFromMemberManager = () => !!window.__listSource.memberManager;
+async function refreshListSource() {
+  window.__listSource = (await window.api.getListSource().catch(() => null)) || window.__listSource;
+  if (window.__listSource.notice) toast(window.__listSource.notice);
+  const importButton = qs('.nav-btn[data-page="import"]');
+  if (importButton) importButton.style.display = listFromMemberManager() ? "none" : "";
+}
+
+/** The note shown where contacts used to be changed. */
+function memberManagerNote(what) {
+  return `<div class="shared-note member-manager-note">${what} Contacts come from <strong>MemberManager</strong>: every member, with their household's
+    address and MemberManager's fields as columns. Change people and add fields there, and they show here within a minute or so.${
+      window.__listSource.reachable ? "" : " MemberManager's list can't be reached from this computer right now, so these are the contacts as they were last updated."
+    }</div>`;
+}
+
+window.listFromMemberManager = listFromMemberManager;
+window.refreshListSource = refreshListSource;
+window.memberManagerNote = memberManagerNote;
 window.navigate = navigate;
 window.toast = toast;
 window.confirmAction = confirmAction;

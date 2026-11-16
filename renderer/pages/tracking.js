@@ -642,8 +642,11 @@ window.Pages.tracking = {
         btn.disabled = true;
         btn.textContent = "Sending…";
         try {
-          const { outcome } = await window.api.retrySend(recipientId, qs(".retry-email", cell).value);
-          toast(outcome === "sent" ? "Email sent." : "Switched to paper — the letter is ready to open from this row.");
+          const { outcome, inMemberManager } = await window.api.retrySend(recipientId, qs(".retry-email", cell).value);
+          toast(
+            (outcome === "sent" ? "Email sent." : "Switched to paper — the letter is ready to open from this row.") +
+              (inMemberManager ? " That address is for this mailing only: change their email in MemberManager for the next one." : "")
+          );
         } catch (err) {
           toast(`Still failing: ${err.message}`, true);
         }

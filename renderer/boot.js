@@ -47,7 +47,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
   window.api.checkForUpdates(); // not awaited -- a startup check shouldn't hold up opening the app
 
-  navigate("import");
+  await refreshListSource();
+  navigate(listFromMemberManager() ? "contacts" : "import");
 });
 
 function reloadCurrentPage() {
@@ -136,6 +137,7 @@ async function initSharing() {
 
   window.api.onDataChanged(({ messages }) => {
     for (const message of messages || []) toast(message);
+    refreshListSource();
     changedSinceLoad = true;
     render();
   });

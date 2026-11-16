@@ -2,6 +2,18 @@
 
 A desktop tool to send form requests to a mailing list — by email or paper mail depending on what's on file — and track who has responded and who hasn't.
 
+## Contacts come from MemberManager
+
+[MemberManager](https://github.com/AB-Kevin/MemberManager) keeps the office's member list. While someone is signed in to [AB Apps](https://github.com/AB-Kevin/ab-apps) and MemberManager has a list in the AB Apps folder, FormTracker's contacts come from it (`ab-common/members`, `lib/fromMemberManager.js`):
+
+- **Every member is a contact**: each member household's head (anyone with a Member ID), with the household's address, the Member ID as ID, and MemberManager's fields as extra columns by name, plus **Organization** and **Member status**. Templates use them as `{{extra.Field name}}` and mailings filter on them.
+- **The host keeps the contacts up to date** within seconds of MemberManager saving. A contact is never replaced: the first time, each is linked to its member by Member ID (or else by name and email), so mailings, tracking and responses keep pointing at it. A member new to MemberManager becomes a new contact; a contact whose member left MemberManager is removed here (with its history), and restored if they come back.
+- **Contacts are changed only in MemberManager.** Import List and Add fields from a linked list step aside. Remove and Restore on the Contacts page are still FormTracker's own: someone removed here stays removed whatever MemberManager does. The shared setting `listFrom: "MemberManager"` records the switch.
+- **Fix & resend** sends to the corrected address for that mailing only (Resend uses it too). Change the address in MemberManager for the next mailing.
+- A column FormTracker had from the membership export but MemberManager has no field for is gone from contacts; add the field in MemberManager (a column of the membership export can become a field on its Import page) to filter or merge on it again.
+
+Without AB Apps, or before MemberManager has a list, everything below works as it always has.
+
 ## What it does
 
 1. Import a mailing list from a CSV or spreadsheet file. Any column not explicitly mapped is kept and can still be used to select recipients. Map a column to **ID** and re-importing later updates any contact whose ID matches, in place, instead of creating a duplicate — so a refreshed list keeps its mailing/tracking history.

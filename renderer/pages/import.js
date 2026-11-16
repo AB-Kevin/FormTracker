@@ -33,6 +33,10 @@ function guessMapping(header) {
 
 window.Pages.import = {
   async render(container) {
+    if (listFromMemberManager()) {
+      container.innerHTML = `<h1>Import List</h1>${memberManagerNote("Importing is done in MemberManager now.")}`;
+      return;
+    }
     container.innerHTML = `
       <h1>Import Mailing List</h1>
       <div class="row" style="margin-bottom:16px">
