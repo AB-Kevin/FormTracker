@@ -10,7 +10,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // Background syncs only speak up when something changed, so a connection
   // that stays broken (or a review list nobody has gotten to yet) doesn't
-  // toast every five minutes.
+  // toast on every retry. A broken connection also shows above every page
+  // (see the daily sync in initSharing).
   let lastSyncErrors = "";
   let lastNeedsReview = 0;
   window.api.onSyncCompleted((summary) => {
@@ -56,16 +57,50 @@ function reloadCurrentPage() {
   if (active) navigate(active.dataset.page);
 }
 
+// The daily Gravity Forms sync's notice (lib/dailySync.js), or "": on the
+// host, that its last check failed; anywhere else, that nothing has been
+// checked for two days.
+function dailySyncWarningText(sync) {
+  const w = sync?.warning;
+  if (!w) return "";
+  const sentence = (s) => (/[.!?]$/.test(s) ? s : `${s}.`);
+  if (w.kind === "failing") {
+    return `Gravity Forms couldn't be checked for new online responses (${formatDate(w.at)}): ${sentence(w.message)} It's tried again in an hour.`;
+  }
+  let text = `Gravity Forms hasn't been checked for new online responses ${w.lastCheckAt ? `since ${formatDate(w.lastCheckAt)}` : "yet"}. The host computer checks once a day while FormTracker is open on it`;
+  if (sync.host) text += ` (that's ${sync.host}'s computer).`;
+  else text += `, and it isn't open right now.${w.lastCheckBy ? ` The last check was on ${w.lastCheckBy}'s computer.` : ""}`;
+  if (w.message) text += ` Its last try failed: ${sentence(w.message)}`;
+  return text;
+}
+
 // Sharing the data folder (see lib/team.js): the notices above every page --
 // the folder unreachable, an older FormTracker editing, this computer waiting
-// to be host or the host not open, OneDrive conflict copies, and changes
-// saved since the page loaded -- and, under the app's name, this computer's
-// part. A page isn't redrawn under someone's typing when others' changes
-// arrive; "Show new changes" does that.
+// to be host or the host not open, OneDrive conflict copies, the daily
+// Gravity Forms sync falling behind, and changes saved since the page
+// loaded -- and, under the app's name, this computer's part. A page isn't
+// redrawn under someone's typing when others' changes arrive; "Show new
+// changes" does that.
 async function initSharing() {
   const banner = qs("#data-banner");
   let status = await window.api.getTeamStatus();
+  let sync = await window.api.getSyncStatus().catch(() => null);
   let changedSinceLoad = false;
+  let retrying = false;
+
+  async function retrySync() {
+    if (retrying) return;
+    retrying = true;
+    render();
+    try {
+      const summary = await window.api.runSync();
+      if (!summary.errors.length) toast(`Gravity Forms checked — ${plural(summary.matched, "new response")} matched.`);
+    } catch (err) {
+      toast(`Sync failed: ${err.message}`, true);
+    }
+    retrying = false;
+    render();
+  }
 
   function line(tone, text, actions = []) {
     const el = document.createElement("div");
@@ -105,6 +140,12 @@ async function initSharing() {
     } else if (status.role === "editor" && !status.host) {
       line("warn", `The host computer's app isn't open, so changes made here are kept on this computer for now${unsaved}. They're saved to the shared files when it's open again, and until then nobody else sees them.`);
     }
+    const syncWarning = status.role === "unavailable" ? "" : dailySyncWarningText(sync);
+    if (syncWarning) {
+      const actions = [{ label: "Gravity Forms settings", onClick: () => navigate("gravity-forms") }];
+      if (sync.warning.kind === "failing") actions.unshift({ label: retrying ? "Checking…" : "Try again", onClick: retrySync });
+      line("warn", syncWarning, actions);
+    }
     if (changedSinceLoad) {
       line("info", "Changes have been saved since this page loaded.", [{ label: "Show new changes", onClick: reloadCurrentPage }]);
     }
@@ -135,10 +176,18 @@ async function initSharing() {
     render();
   });
 
-  window.api.onDataChanged(({ messages }) => {
+  // The host pushes it after every check and every few minutes; another
+  // computer's check reaches here as a data change.
+  window.api.onSyncStatus((next) => {
+    sync = next;
+    render();
+  });
+
+  window.api.onDataChanged(async ({ messages }) => {
     for (const message of messages || []) toast(message);
     refreshListSource();
     changedSinceLoad = true;
+    sync = (await window.api.getSyncStatus().catch(() => null)) || sync;
     render();
   });
 

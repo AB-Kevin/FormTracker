@@ -25,8 +25,11 @@ const memberList = require("ab-common/members");
 const { planSync } = require("./lib/fromMemberManager");
 const { readIdentity, watchIdentity, sharedServices } = require("./lib/abApps");
 const { isSensitive, withoutSensitive } = require("./lib/sensitiveColumns");
+const { watchingSince, dailySyncDue, dailySyncWarning } = require("./lib/dailySync");
 
-const SYNC_INTERVAL_MS = 5 * 60 * 1000;
+// How often the host asks whether the daily Gravity Forms sync is due (see
+// lib/dailySync.js) -- not how often it syncs.
+const DAILY_SYNC_TICK_MS = 5 * 60 * 1000;
 let mainWindow = null;
 
 // ---- secret encryption (SMTP password, Gravity Forms consumer secret) ----
@@ -169,13 +172,13 @@ app.whenReady().then(() => {
   nativeTheme.themeSource = savedTheme();
   createWindow();
   // Only the host syncs: recording responses is a change like any other,
-  // and two computers syncing could record one entry twice.
+  // and two computers syncing could record one entry twice. It does so once
+  // a day (lib/dailySync.js); the tick also lets every computer notice when
+  // that hasn't happened for two days.
   setInterval(() => {
-    if (!actingHost) return;
-    runSync()
-      .then((summary) => sendToWindow("sync:completed", summary))
-      .catch((err) => console.error("Background sync failed:", err));
-  }, SYNC_INTERVAL_MS);
+    maybeDailySync();
+    sendSyncStatus();
+  }, DAILY_SYNC_TICK_MS);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -317,6 +320,10 @@ function updateRole() {
     team.setActing(acting);
     legacyLock.hold(acting);
     if (acting) removeSensitiveColumns();
+    // A host that's just started (or taken over) checks straight away if
+    // the daily sync is due, rather than at the next tick.
+    if (acting) maybeDailySync();
+    sendSyncStatus();
   }
   if (actingHost) {
     saveIncoming();
@@ -1437,11 +1444,11 @@ async function syncGravityForms() {
   return summary;
 }
 
-// The 5-minute timer and the "Sync now" button can overlap; both would read
+// The daily sync and the "Sync now" button can overlap; both would read
 // the same already-recorded entries and record a new one twice.
 let syncInFlight = null;
 function runSync() {
-  if (!syncInFlight) syncInFlight = syncGravityForms().finally(() => (syncInFlight = null));
+  if (!syncInFlight) syncInFlight = syncAndRecord().finally(() => (syncInFlight = null));
   return syncInFlight;
 }
 
@@ -1449,6 +1456,90 @@ handleEdit("sync:run", async () => {
   requireHost("syncs Gravity Forms");
   return runSync();
 });
+
+// ---- the daily sync ----
+// See lib/dailySync.js for what it does and the status it keeps in the
+// shared gfSync.json. A "Sync now" counts as that day's check too.
+
+const SYNC_STATUS_KEY = "status";
+
+function syncStatus() {
+  try {
+    return store.list("gfSync").find((row) => row.key === SYNC_STATUS_KEY) || null;
+  } catch {
+    return null; // a half-synced file; read again on the next tick
+  }
+}
+
+// Only the host writes it. Losing the host's job partway through a sync
+// just leaves the status as it was, for the next host to update.
+function recordSyncStatus(patch) {
+  try {
+    store.upsertMany("gfSync", "key", [{ key: SYNC_STATUS_KEY, ...patch }]);
+  } catch (err) {
+    console.error("Couldn't record the Gravity Forms sync's status:", err.message);
+  }
+  sendSyncStatus();
+}
+
+// Syncs, then records how it went. A sync that couldn't check one of the
+// connections is a failed check (the others are still matched), tried again
+// in an hour.
+async function syncAndRecord() {
+  let summary;
+  try {
+    summary = await syncGravityForms();
+  } catch (err) {
+    recordSyncStatus({ lastError: { at: new Date().toISOString(), message: err.message || String(err) } });
+    throw err;
+  }
+  const at = new Date().toISOString();
+  if (summary.errors.length) {
+    recordSyncStatus({ lastError: { at, message: summary.errors.join("; ") } });
+  } else {
+    recordSyncStatus({ lastCheckAt: at, lastCheckBy: shownName(), lastCheckOn: os.hostname(), lastMatched: summary.matched, lastError: null });
+  }
+  return summary;
+}
+
+function maybeDailySync() {
+  if (!actingHost || syncInFlight || !team?.dataDir) return;
+  if (!dailySyncDue(syncStatus(), Date.now())) return;
+  runSync()
+    .then((summary) => sendToWindow("sync:completed", summary))
+    .catch((err) => console.error("Daily Gravity Forms sync failed:", err));
+}
+
+// What the notices above every page need: the warning from
+// dailySyncWarning, plus the last check, and who's host now.
+function syncStatusForWindow() {
+  const status = syncStatus();
+  let since = null;
+  let host = null;
+  try {
+    if (team?.dataDir) {
+      since = watchingSince(store.list("gravityForms"), store.list("mailings"), store.list("mailingRecipients"));
+      host = activeHosts(team.people())[0]?.name || null;
+    }
+  } catch {
+    // Unreadable for now: no warning until the next tick.
+  }
+  return {
+    warning: dailySyncWarning(status, { isHost: actingHost, since, now: Date.now() }),
+    lastCheckAt: status?.lastCheckAt || null,
+    lastCheckBy: status?.lastCheckBy || null,
+    lastMatched: status?.lastMatched ?? null,
+    lastError: status?.lastError || null,
+    isHost: actingHost,
+    host,
+  };
+}
+
+function sendSyncStatus() {
+  sendToWindow("sync:status", syncStatusForWindow());
+}
+
+ipcMain.handle("sync:status", async () => syncStatusForWindow());
 
 function describeRecipient(recipient, contactById, mailingById) {
   const contact = contactById.get(recipient.contactId);

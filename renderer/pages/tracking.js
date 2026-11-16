@@ -64,6 +64,7 @@ window.Pages.tracking = {
     container.innerHTML = `
       <h1>Tracking</h1>
       <p class="subtitle">Every recipient, how they were reached, and whether they've replied.</p>
+      <p class="hint" id="sync-when"></p>
 
       <div class="stat-row" id="stat-row"></div>
 
@@ -135,8 +136,24 @@ window.Pages.tracking = {
     qs("#status-filter", container).value = statusFilter;
 
     async function reload() {
-      [rows, review] = await Promise.all([window.api.listTracking(mailingFilter || undefined), window.api.listGfReview()]);
+      let sync;
+      [rows, review, sync] = await Promise.all([
+        window.api.listTracking(mailingFilter || undefined),
+        window.api.listGfReview(),
+        window.api.getSyncStatus().catch(() => null),
+      ]);
+      renderSyncWhen(sync);
       renderAll();
+    }
+
+    // When online responses were last pulled in (lib/dailySync.js).
+    function renderSyncWhen(sync) {
+      const el = qs("#sync-when", container);
+      if (!sync) return (el.textContent = "");
+      const last = sync.lastCheckAt
+        ? `Last checked ${formatDate(sync.lastCheckAt)}${sync.lastCheckBy ? ` on ${sync.lastCheckBy}'s computer` : ""}.`
+        : "Not checked yet.";
+      el.textContent = `The host computer checks Gravity Forms for new online responses once a day while FormTracker is open on it. ${last}`;
     }
 
     function filteredRows() {

@@ -172,7 +172,7 @@ function setJournal(next) {
 }
 
 // The collections a change may touch: everything in a data folder.
-const SHARED_COLLECTIONS = new Set(["contacts", "templates", "gravityForms", "mailings", "mailingRecipients", "responses", "gfForms", "gfUnmatched"]);
+const SHARED_COLLECTIONS = new Set(["contacts", "templates", "gravityForms", "mailings", "mailingRecipients", "responses", "gfForms", "gfUnmatched", "gfSync"]);
 
 const isPlainObject = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));

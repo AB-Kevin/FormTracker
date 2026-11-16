@@ -70,6 +70,13 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.on("sync:completed", listener);
     return () => ipcRenderer.removeListener("sync:completed", listener);
   },
+  // The daily sync (lib/dailySync.js): { warning, lastCheckAt, lastCheckBy, lastMatched, lastError, isHost, host }.
+  getSyncStatus: () => ipcRenderer.invoke("sync:status"),
+  onSyncStatus: (callback) => {
+    const listener = (event, status) => callback(status);
+    ipcRenderer.on("sync:status", listener);
+    return () => ipcRenderer.removeListener("sync:status", listener);
+  },
 
   confirm: (message, okLabel) => ipcRenderer.invoke("dialog:confirm", message, okLabel),
   openPath: (filePath) => ipcRenderer.invoke("shell:open-path", filePath),

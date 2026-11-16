@@ -77,7 +77,15 @@ FormTracker doesn't host the web form itself — it uses a form already on your 
 4. In FormTracker, go to **Gravity Forms**, fill in the site URL and consumer key/secret (unless AB Apps sets them), click **Test connection** to confirm and pick the form, then fill in the page URL, token parameter name, and the hidden field's ID.
 5. *(Optional)* If the form asks for a member ID, also fill in that field's ID as **Member ID field ID**. Submissions without a token (e.g. from a plain link to the form) are then matched against the contacts' ID column — ignoring case and spacing, and treating look-alike characters such as O/0 and I/L/1 as the same when that still points to exactly one member.
 
-FormTracker never needs an inbound connection to your computer — it only reaches out to the Gravity Forms REST API, on a 5-minute timer or when you click **Sync Gravity Forms now** on the Tracking page, to pull in new submissions and match them to recipients. Only submissions made after a mailing was created are considered. Anything that can't be matched with confidence is listed under **Online responses to match** on the Tracking page, with suggested members, to match by hand or dismiss.
+FormTracker never needs an inbound connection to your computer — it only reaches out to the Gravity Forms REST API, once a day or when you click **Sync Gravity Forms now** on the Tracking page, to pull in new submissions and match them to recipients. Only submissions made after a mailing was created are considered. Anything that can't be matched with confidence is listed under **Online responses to match** on the Tracking page, with suggested members, to match by hand or dismiss.
+
+### The daily sync
+
+The host computer (see **Sharing a data folder**) checks Gravity Forms once a day while FormTracker is open there, and matches every new submission (`lib/dailySync.js`). It needs no setup beyond being the host. Handing the host's job to another computer moves the daily sync with it. **Sync Gravity Forms now** on the Tracking page counts as that day's check, and the Tracking page shows when the last check was and on whose computer.
+
+- **Every other computer shows a notice when nothing has been checked for two days**: the host may be off, or not running FormTracker. The notice includes the last check's error, if there was one. A team's first mailing tied to a Gravity Forms connection gets its two days too, and a team without one never sees the notice.
+- **The host shows a notice when its last check failed** (a connection with no consumer secret on that computer, say, or the website refusing the key), with **Try again**. It also tries again by itself an hour later. A check where any connection fails counts as failed, though the connections that worked still have their responses matched.
+- The status is kept in the shared data folder's `gfSync.json`, which only the host writes. Update the host first: an older FormTracker on the host still syncs, but it doesn't record its checks, so updated computers show the notice after two days.
 
 ## Typical workflow
 
