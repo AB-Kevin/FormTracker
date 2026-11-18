@@ -1190,6 +1190,56 @@ handleEdit("tracking:remove-recipient", async (event, recipientId) => {
   return true;
 });
 
+// Undoes a response recorded on the wrong person (or by mistake): deletes
+// every response recorded for them and puts them back to "no reply". A web
+// submission goes back under "Online responses to match" to be assigned to
+// the right person, held there so the next sync doesn't match it to this
+// same person again. Stored attachment files are left on disk.
+handleEdit("tracking:undo-response", async (event, recipientId) => {
+  const recipient = store.get("mailingRecipients", recipientId);
+  if (!recipient) throw new Error("Recipient not found.");
+  if (recipient.status !== "responded") throw new Error("This recipient hasn't responded.");
+
+  const responses = store.list("responses").filter((resp) => resp.mailingRecipientId === recipientId);
+  const gravityFormId = store.get("mailings", recipient.mailingId)?.gravityFormId;
+  const webResponses = responses.filter((resp) => resp.gfEntryId);
+  if (gravityFormId && webResponses.length) {
+    const gf = store.get("gravityForms", gravityFormId);
+    const cachedFields = store.list("gfForms").find((f) => f.gravityFormId === gravityFormId)?.fields;
+    const entryIds = new Set(webResponses.map((resp) => String(resp.gfEntryId)));
+    store.removeWhere("gfUnmatched", (u) => u.gravityFormId === gravityFormId && entryIds.has(String(u.gfEntryId)));
+    store.insertMany(
+      "gfUnmatched",
+      webResponses.map((resp) => {
+        const entry = resp.data || {};
+        const who = cachedFields ? gravityForms.summarizeEntry(entry, { fields: cachedFields }, gf?.nameFieldId) : { name: "", email: "" };
+        return {
+          gravityFormId,
+          gfEntryId: String(resp.gfEntryId),
+          submittedAt: resp.receivedAt || null,
+          memberIdEntered: resp.memberIdEntered || "",
+          name: who.name,
+          email: who.email,
+          suggestedRecipientIds: [],
+          dismissed: false,
+          heldForReview: true,
+          entry,
+        };
+      })
+    );
+  }
+
+  store.removeWhere("responses", (resp) => resp.mailingRecipientId === recipientId);
+  // Back to what they were before responding: sent (emailed, or a letter
+  // generated or mailed) or still pending.
+  const wasSent = !!(recipient.sentAt || recipient.mailedAt || recipient.generatedFilePath);
+  return store.update("mailingRecipients", recipientId, {
+    status: wasSent ? "sent" : "pending",
+    enteredAt: null,
+    previousEnteredAt: null,
+  });
+});
+
 // Retries one recipient whose send failed, after saving a corrected email
 // address on their contact. A blank address switches them to a paper letter
 // instead -- e.g. a contact imported with "N/A" in the email column.
@@ -1432,14 +1482,20 @@ async function syncGravityForms() {
     const form = await gravityForms.fetchForm(config).catch(() => null);
     if (form) cacheFormFields(gf.id, form);
 
-    const recorded = new Set(store.list("responses").filter((r) => r.gfEntryId).map((r) => r.gfEntryId));
+    const recorded = new Set(store.list("responses").filter((r) => r.gfEntryId).map((r) => String(r.gfEntryId)));
+    // Entries whose match was undone (tracking:undo-response) wait for
+    // someone to pick the right person rather than being matched again.
+    const held = store
+      .list("gfUnmatched")
+      .filter((u) => u.gravityFormId === gf.id && u.heldForReview && !recorded.has(String(u.gfEntryId)));
+    const heldIds = new Set(held.map((u) => String(u.gfEntryId)));
     const candidates = recipients.map((recipient) => ({
       recipient,
       memberId: contactById.get(recipient.contactId)?.externalId || "",
       mailingCreatedAt: linkedMailings.get(recipient.mailingId).createdAt,
     }));
     const { matches, unmatched } = gravityForms.matchEntries(
-      entries.filter((e) => !recorded.has(String(e.id))),
+      entries.filter((e) => !recorded.has(String(e.id)) && !heldIds.has(String(e.id))),
       config,
       candidates
     );
@@ -1469,6 +1525,7 @@ async function syncGravityForms() {
         entry,
       };
     });
+    reviewRows.push(...held);
     store.removeWhere("gfUnmatched", (u) => u.gravityFormId === gf.id);
     store.insertMany("gfUnmatched", reviewRows);
     summary.needsReview += reviewRows.filter((r) => !r.dismissed).length;

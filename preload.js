@@ -54,6 +54,7 @@ contextBridge.exposeInMainWorld("api", {
   unmarkRemailed: (recipientId) => ipcRenderer.invoke("tracking:unmark-remailed", recipientId),
   setEntered: (recipientIds, entered) => ipcRenderer.invoke("tracking:set-entered", recipientIds, entered),
   removeRecipient: (recipientId) => ipcRenderer.invoke("tracking:remove-recipient", recipientId),
+  undoResponse: (recipientId) => ipcRenderer.invoke("tracking:undo-response", recipientId),
   retrySend: (recipientId, email) => ipcRenderer.invoke("tracking:retry-send", recipientId, email),
   resend: (recipientIds) => ipcRenderer.invoke("tracking:resend", recipientIds),
   exportTracking: (recipientIds, format) => ipcRenderer.invoke("tracking:export", recipientIds, format),

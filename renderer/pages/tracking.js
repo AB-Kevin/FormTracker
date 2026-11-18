@@ -375,6 +375,7 @@ window.Pages.tracking = {
                   : ""
               }
               ${canMarkRemailed(r) && r.resentAt ? `<button class="btn secondary" data-unremail="${r.id}" type="button">Undo re-mailed</button>` : ""}
+              ${r.status === "responded" ? `<button class="btn secondary" data-undo-response="${r.id}" type="button">Undo response</button>` : ""}
               <button class="btn secondary" data-remove="${r.id}" type="button">Remove from mailing</button>
             </div>
           </div>
@@ -531,6 +532,27 @@ window.Pages.tracking = {
           await window.api.removeRecipient(btn.dataset.remove);
           if (expandedId === btn.dataset.remove) expandedId = null;
           toast(`Removed ${who} from the mailing.`);
+          await reload();
+        })
+      );
+      qsa("[data-undo-response]", body).forEach((btn) =>
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          const r = rows.find((row) => row.id === btn.dataset.undoResponse);
+          const who = r?.contact?.name || "this recipient";
+          const web = r?.response?.channel === "web";
+          const message =
+            `Mark ${who} as not responded?\n\nThe response recorded for them will be deleted` +
+            (r?.attachments.length ? ", along with its attached files" : "") +
+            "." +
+            (web ? ` Their online form entry will go back under "Online responses to match" so you can assign it to the right person.` : "");
+          if (!(await confirmAction(message, "Undo response"))) return;
+          try {
+            await window.api.undoResponse(btn.dataset.undoResponse);
+            toast(`${who} marked as not responded.`);
+          } catch (err) {
+            toast(`Couldn't undo: ${err.message}`, true);
+          }
           await reload();
         })
       );
