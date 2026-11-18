@@ -1089,6 +1089,22 @@ handleEdit("tracking:mark-mailed", async (event, recipientIds) => {
   return { updated };
 });
 
+// Records mailing a physical copy to someone who was emailed the form but
+// hasn't responded -- printed by hand from the exported address list. Kept in
+// mailedAt, as for paper, so the export's Mailed At column shows it. Only
+// recipients actually emailed (status "sent"), not yet responded and not
+// already marked are updated; the status itself is left alone.
+handleEdit("tracking:mark-copy-mailed", async (event, recipientIds) => {
+  const ids = new Set(recipientIds || []);
+  const now = new Date().toISOString();
+  const updated = store.updateWhere("mailingRecipients", (recipient) => {
+    if (!ids.has(recipient.id)) return null;
+    if (recipient.channel !== "email" || recipient.status !== "sent" || recipient.mailedAt) return null;
+    return { mailedAt: now };
+  });
+  return { updated };
+});
+
 // Records sending a paper recipient another copy because they haven't
 // responded -- the paper counterpart of tracking:resend. mailedAt keeps the
 // first mailing; resentAt records the latest re-mailing, the same field an
@@ -1129,13 +1145,15 @@ handleEdit("tracking:set-entered", async (event, recipientIds, entered) => {
   return { updated };
 });
 
-// Undoes tracking:mark-mailed. A paper recipient with no generated letter can
-// only have reached "sent" by being marked mailed, so it goes back to pending.
-// A re-mail date goes too, since it can't have been re-mailed if it was never
-// mailed.
+// Undoes tracking:mark-mailed, or tracking:mark-copy-mailed for an emailed
+// recipient. A paper recipient with no generated letter can only have reached
+// "sent" by being marked mailed, so it goes back to pending. A paper re-mail
+// date goes too, since it can't have been re-mailed if it was never mailed.
+// An emailed recipient keeps its status and resend date: only the copy goes.
 handleEdit("tracking:unmark-mailed", async (event, recipientId) => {
   const recipient = store.get("mailingRecipients", recipientId);
   if (!recipient) throw new Error("Recipient not found.");
+  if (recipient.channel !== "paper") return store.update("mailingRecipients", recipientId, { mailedAt: null });
   const patch = { mailedAt: null, resentAt: null };
   if (recipient.status === "sent" && !recipient.generatedFilePath) {
     patch.status = "pending";
@@ -1293,13 +1311,24 @@ ipcMain.handle("tracking:export", async (event, recipientIds, format) => {
   return result.filePath;
 });
 
-ipcMain.handle("tracking:export-paper-addresses", async (event, recipientIds) => {
-  const recipients = recipientsByIds(recipientIds).filter((r) => r.channel === "paper");
+// Mailing addresses for the shown recipients, whichever way they were first
+// reached -- so filtering to "Not yet responded" gives a list for mailing a
+// physical copy to everyone still outstanding, emailed ones included. One row
+// per contact, so someone in several of the shown mailings gets one label.
+ipcMain.handle("tracking:export-addresses", async (event, recipientIds) => {
+  const recipients = recipientsByIds(recipientIds);
   const contacts = new Map(store.list("contacts").map((c) => [c.id, c]));
 
-  const rows = recipients.map((r) => {
+  const byContact = new Map();
+  for (const r of recipients) {
+    const key = r.contactId || r.id;
+    const existing = byContact.get(key);
+    if (existing) {
+      if (!existing.Channel.split(", ").includes(r.channel)) existing.Channel += `, ${r.channel}`;
+      continue;
+    }
     const contact = contacts.get(r.contactId);
-    return {
+    byContact.set(key, {
       ID: contact?.externalId || "",
       "Contact ID": r.contactId || "",
       Name: contact?.name || "",
@@ -1308,19 +1337,22 @@ ipcMain.handle("tracking:export-paper-addresses", async (event, recipientIds) =>
       City: contact?.city || "",
       State: contact?.state || "",
       Zip: contact?.zip || "",
-    };
-  });
+      Channel: r.channel,
+    });
+  }
+  const rows = [...byContact.values()];
+  const missingAddress = rows.filter((row) => !row["Address Line 1"].trim()).map((row) => row.Name || row.ID || row["Contact ID"]);
 
   const result = await dialog.showSaveDialog(mainWindow, {
-    title: "Export paper mailing addresses",
-    defaultPath: "formtracker-paper-addresses.csv",
+    title: "Export mailing addresses",
+    defaultPath: "formtracker-addresses.csv",
     filters: [{ name: "CSV", extensions: ["csv"] }],
   });
   if (result.canceled || !result.filePath) return null;
 
   const Papa = require("papaparse");
   fs.writeFileSync(result.filePath, Papa.unparse(rows), "utf8");
-  return result.filePath;
+  return { filePath: result.filePath, count: rows.length, missingAddress };
 });
 
 // ---------------------------------------------------------------------------

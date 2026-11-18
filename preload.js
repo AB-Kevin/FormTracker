@@ -49,6 +49,7 @@ contextBridge.exposeInMainWorld("api", {
   markReceived: (recipientId, data) => ipcRenderer.invoke("tracking:mark-received", recipientId, data),
   markMailed: (recipientIds) => ipcRenderer.invoke("tracking:mark-mailed", recipientIds),
   unmarkMailed: (recipientId) => ipcRenderer.invoke("tracking:unmark-mailed", recipientId),
+  markCopyMailed: (recipientIds) => ipcRenderer.invoke("tracking:mark-copy-mailed", recipientIds),
   markRemailed: (recipientIds) => ipcRenderer.invoke("tracking:mark-remailed", recipientIds),
   unmarkRemailed: (recipientId) => ipcRenderer.invoke("tracking:unmark-remailed", recipientId),
   setEntered: (recipientIds, entered) => ipcRenderer.invoke("tracking:set-entered", recipientIds, entered),
@@ -56,7 +57,7 @@ contextBridge.exposeInMainWorld("api", {
   retrySend: (recipientId, email) => ipcRenderer.invoke("tracking:retry-send", recipientId, email),
   resend: (recipientIds) => ipcRenderer.invoke("tracking:resend", recipientIds),
   exportTracking: (recipientIds, format) => ipcRenderer.invoke("tracking:export", recipientIds, format),
-  exportPaperAddresses: (recipientIds) => ipcRenderer.invoke("tracking:export-paper-addresses", recipientIds),
+  exportAddresses: (recipientIds) => ipcRenderer.invoke("tracking:export-addresses", recipientIds),
 
   listResponses: () => ipcRenderer.invoke("responses:list"),
   getResponse: (recipientId, responseId) => ipcRenderer.invoke("responses:get", recipientId, responseId),

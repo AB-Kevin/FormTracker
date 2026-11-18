@@ -10,6 +10,7 @@ function statusBadge(row) {
     if (row.mailedAt) return `<span class="badge badge-sent">Mailed — no reply</span>`;
     if (row.status === "sent") return `<span class="badge badge-pending">Letter ready — not mailed</span>`;
   }
+  if (row.status === "sent" && row.mailedAt) return `<span class="badge badge-sent">Emailed &amp; mailed — no reply</span>`;
   if (row.status === "sent") return `<span class="badge badge-sent">Sent — no reply</span>`;
   if (isSendFailed(row)) return `<span class="badge badge-failed">Send failed</span>`;
   return `<span class="badge badge-pending">Pending</span>`;
@@ -23,6 +24,12 @@ function canMarkMailed(row) {
 // Mailed, but no reply yet -- another copy can be mailed and recorded.
 function canMarkRemailed(row) {
   return row.channel === "paper" && row.status !== "responded" && !!row.mailedAt;
+}
+
+// Emailed, no reply, and no paper copy recorded yet -- one can be printed from
+// the exported address list, mailed and recorded here.
+function canMarkCopyMailed(row) {
+  return row.channel === "email" && row.status === "sent" && !row.mailedAt;
 }
 
 // Sending to this recipient was attempted and failed (bad address, rejected
@@ -98,6 +105,7 @@ window.Pages.tracking = {
               <option value="not-entered">Responded — not yet entered</option>
               <option value="entered">Entered</option>
               <option value="not-mailed">Paper not yet mailed</option>
+              <option value="no-copy">Emailed — no paper copy yet</option>
               <option value="failed">Send failed</option>
             </select>
           </div>
@@ -116,9 +124,10 @@ window.Pages.tracking = {
           <button class="btn secondary" id="sync-btn" type="button" style="align-self:flex-end;margin-bottom:12px">Sync Gravity Forms now</button>
           <button class="btn secondary" id="export-csv-btn" type="button" style="align-self:flex-end;margin-bottom:12px">Export CSV</button>
           <button class="btn secondary" id="export-xlsx-btn" type="button" style="align-self:flex-end;margin-bottom:12px">Export Excel</button>
-          <button class="btn secondary" id="export-paper-btn" type="button" style="align-self:flex-end;margin-bottom:12px">Export Paper Addresses (CSV)</button>
+          <button class="btn secondary" id="export-addresses-btn" type="button" style="align-self:flex-end;margin-bottom:12px" title="Mailing addresses of everyone shown, emailed or paper — filter Status to Not yet responded for who still needs a copy">Export Addresses (CSV)</button>
           <button class="btn" id="mark-batch-btn" type="button" style="align-self:flex-end;margin-bottom:12px;display:none"></button>
           <button class="btn secondary" id="remail-batch-btn" type="button" style="align-self:flex-end;margin-bottom:12px;display:none"></button>
+          <button class="btn secondary" id="copy-batch-btn" type="button" style="align-self:flex-end;margin-bottom:12px;display:none"></button>
         </div>
         <div id="field-rules-area"></div>
         <div class="row" style="margin-bottom:12px">
@@ -163,6 +172,7 @@ window.Pages.tracking = {
         if (statusFilter === "not-entered" && !needsEntering(r)) return false;
         if (statusFilter === "entered" && !r.enteredAt) return false;
         if (statusFilter === "not-mailed" && !canMarkMailed(r)) return false;
+        if (statusFilter === "no-copy" && !canMarkCopyMailed(r)) return false;
         if (statusFilter === "failed" && !isSendFailed(r)) return false;
         if (channelFilter !== "all" && r.channel !== channelFilter) return false;
         if (fieldContactIds && !fieldContactIds.has(r.contactId)) return false;
@@ -330,7 +340,7 @@ window.Pages.tracking = {
               ${isSendFailed(r) ? detailRow("Send error", r.error) : ""}
               ${detailRow(r.channel === "paper" ? "Letter generated at" : "Sent at", formatDate(r.sentAt))}
               ${r.channel === "paper" ? "" : detailRow("Last resent at", formatDate(r.resentAt))}
-              ${detailRow("Mailed at", formatDate(r.mailedAt))}
+              ${detailRow(r.channel === "paper" ? "Mailed at" : "Paper copy mailed at", formatDate(r.mailedAt))}
               ${r.channel === "paper" ? detailRow("Last re-mailed at", formatDate(r.resentAt)) : ""}
               ${detailRow("Generated file", r.generatedFilePath)}
               ${detailRow("Response token", r.responseToken)}
@@ -359,7 +369,11 @@ window.Pages.tracking = {
                 : ""
             }
             <div class="row" style="margin-top:12px;gap:8px">
-              ${r.mailedAt && r.status !== "responded" ? `<button class="btn secondary" data-unmark="${r.id}" type="button">Undo mark as sent</button>` : ""}
+              ${
+                r.mailedAt && r.status !== "responded"
+                  ? `<button class="btn secondary" data-unmark="${r.id}" type="button">${r.channel === "paper" ? "Undo mark as sent" : "Undo copy mailed"}</button>`
+                  : ""
+              }
               ${canMarkRemailed(r) && r.resentAt ? `<button class="btn secondary" data-unremail="${r.id}" type="button">Undo re-mailed</button>` : ""}
               <button class="btn secondary" data-remove="${r.id}" type="button">Remove from mailing</button>
             </div>
@@ -408,7 +422,7 @@ window.Pages.tracking = {
             r.resentAt
               ? `<br/><span class="hint">${r.channel === "paper" ? "re-mailed" : "resent"} ${escapeHtml(formatDate(r.resentAt))}</span>`
               : ""
-          }</td>
+          }${r.channel === "email" && r.mailedAt ? `<br/><span class="hint">paper copy mailed ${escapeHtml(formatDate(r.mailedAt))}</span>` : ""}</td>
           <td>${statusBadge(r)}${
             isSendFailed(r) ? `<br/><span class="hint send-error" title="${escapeHtml(r.error)}">${escapeHtml(r.error)}</span>` : ""
           }</td>
@@ -424,6 +438,7 @@ window.Pages.tracking = {
             ${canResend(r) ? `<button class="btn secondary" data-resend="${r.id}" type="button">Resend</button>` : ""}
             ${canMarkMailed(r) ? `<button class="btn secondary" data-mailed="${r.id}" type="button">Mark as sent</button>` : ""}
             ${canMarkRemailed(r) ? `<button class="btn secondary" data-remailed="${r.id}" type="button">Mark re-mailed</button>` : ""}
+            ${canMarkCopyMailed(r) ? `<button class="btn secondary" data-copy-mailed="${r.id}" type="button">Mark copy mailed</button>` : ""}
             ${r.status === "responded" ? `<button class="btn secondary" data-view-response="${r.id}" type="button">View response</button>` : ""}
             ${
               r.status !== "responded"
@@ -473,8 +488,9 @@ window.Pages.tracking = {
       qsa("[data-unmark]", body).forEach((btn) =>
         btn.addEventListener("click", async (e) => {
           e.stopPropagation();
+          const r = rows.find((row) => row.id === btn.dataset.unmark);
           await window.api.unmarkMailed(btn.dataset.unmark);
-          toast("No longer marked as sent.");
+          toast(r?.channel === "email" ? "Paper copy no longer marked as mailed." : "No longer marked as sent.");
           await reload();
         })
       );
@@ -484,6 +500,15 @@ window.Pages.tracking = {
           btn.disabled = true;
           await window.api.markRemailed([btn.dataset.remailed]);
           toast("Marked as re-mailed today.");
+          await reload();
+        })
+      );
+      qsa("[data-copy-mailed]", body).forEach((btn) =>
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          btn.disabled = true;
+          await window.api.markCopyMailed([btn.dataset.copyMailed]);
+          toast("Paper copy marked as mailed today.");
           await reload();
         })
       );
@@ -589,6 +614,13 @@ window.Pages.tracking = {
       const remailable = list.filter(canMarkRemailed).length;
       remailBtn.style.display = remailable ? "" : "none";
       remailBtn.textContent = `Mark ${remailable} shown paper recipient${remailable === 1 ? "" : "s"} as re-mailed`;
+
+      // And for emailed recipients sent a printed copy from the exported
+      // address list: filter Status = Not yet responded, export, mail, mark.
+      const copyBtn = qs("#copy-batch-btn", container);
+      const copyable = list.filter(canMarkCopyMailed).length;
+      copyBtn.style.display = copyable ? "" : "none";
+      copyBtn.textContent = `Mark ${copyable} shown emailed recipient${copyable === 1 ? "" : "s"} as mailed a copy`;
     }
 
     function openMarkForm(recipientId) {
@@ -746,19 +778,41 @@ window.Pages.tracking = {
       toast(`Marked ${updated} recipient${updated === 1 ? "" : "s"} as re-mailed.`);
       await reload();
     });
+    qs("#copy-batch-btn", container).addEventListener("click", async () => {
+      const ids = filteredRows().filter(canMarkCopyMailed).map((r) => r.id);
+      if (!ids.length) return;
+      const count = `${ids.length} emailed recipient${ids.length === 1 ? "" : "s"}`;
+      if (!(await confirmAction(`Mark ${count} as mailed a paper copy today? Only do this once the copies are in the mail.`, "Mark copy mailed"))) return;
+      const { updated } = await window.api.markCopyMailed(ids);
+      toast(`Marked ${updated} recipient${updated === 1 ? "" : "s"} as mailed a copy.`);
+      await reload();
+    });
     // Exports cover exactly the rows currently shown (all filters + search).
-    async function exportShown(exportFn, onlyPaper) {
-      const shown = filteredRows().filter((r) => !onlyPaper || r.channel === "paper");
-      if (!shown.length) {
-        toast(onlyPaper ? "No paper recipients match these filters." : "No recipients match these filters.", true);
-        return;
-      }
-      const savedPath = await exportFn(shown.map((r) => r.id));
-      if (savedPath) toast(`Exported ${shown.length} row${shown.length === 1 ? "" : "s"} to ${savedPath}`);
+    function shownIds() {
+      const shown = filteredRows();
+      if (!shown.length) toast("No recipients match these filters.", true);
+      return shown.map((r) => r.id);
     }
-    qs("#export-csv-btn", container).addEventListener("click", () => exportShown((ids) => window.api.exportTracking(ids, "csv")));
-    qs("#export-xlsx-btn", container).addEventListener("click", () => exportShown((ids) => window.api.exportTracking(ids, "xlsx")));
-    qs("#export-paper-btn", container).addEventListener("click", () => exportShown((ids) => window.api.exportPaperAddresses(ids), true));
+    async function exportShown(format) {
+      const ids = shownIds();
+      if (!ids.length) return;
+      const savedPath = await window.api.exportTracking(ids, format);
+      if (savedPath) toast(`Exported ${ids.length} row${ids.length === 1 ? "" : "s"} to ${savedPath}`);
+    }
+    qs("#export-csv-btn", container).addEventListener("click", () => exportShown("csv"));
+    qs("#export-xlsx-btn", container).addEventListener("click", () => exportShown("xlsx"));
+    qs("#export-addresses-btn", container).addEventListener("click", async () => {
+      const ids = shownIds();
+      if (!ids.length) return;
+      const saved = await window.api.exportAddresses(ids);
+      if (!saved) return;
+      toast(`Exported ${saved.count} address${saved.count === 1 ? "" : "es"} to ${saved.filePath}`);
+      const missing = saved.missingAddress;
+      if (missing.length) {
+        const names = missing.slice(0, 5).join(", ") + (missing.length > 5 ? `, and ${missing.length - 5} more` : "");
+        toast(`${missing.length} ${missing.length === 1 ? "has" : "have"} no street address on file: ${names}`, true);
+      }
+    });
 
     await reload();
   },
