@@ -328,6 +328,7 @@ tr:hover td { background: var(--green-050); }
 .badge-email { border-color: var(--accent-text); color: var(--accent-text); }
 .badge-paper { border-color: var(--text-muted); color: var(--text-muted); }
 .badge-failed { background: var(--danger-tint); color: var(--danger); }
+.badge-incomplete { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
 .badge-link { cursor: pointer; }
 
 /* A failed send's SMTP error can run long; the full text is in the tooltip
@@ -340,6 +341,16 @@ tr:hover td { background: var(--green-050); }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.incomplete-note {
+  display: inline-block;
+  max-width: 280px;
+  color: var(--warn);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.incomplete-form { padding: 8px 0; }
 
 .empty, .loading { color: var(--text-muted); padding: 40px 0; text-align: center; }
 
@@ -355,6 +366,8 @@ tr:hover td { background: var(--green-050); }
 .stat-card .label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: var(--tracking-label); }
 .stat-card-failed { background: var(--danger-tint); }
 .stat-card-failed .num { color: var(--danger); }
+.stat-card-incomplete { background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.stat-card-incomplete .num { color: var(--warn); }
 
 .entered-check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .entered-check input { width: 16px; height: 16px; margin: 0; cursor: pointer; accent-color: var(--fill-accent); }
@@ -468,6 +481,15 @@ details.own-settings > summary { cursor: pointer; color: var(--text-muted); font
 .resp-member-id .label, .resp-files .label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: var(--tracking-label); font-weight: 600; }
 .resp-member-id-value { font-size: 22px; font-weight: 600; letter-spacing: .04em; }
 .resp-typed-note { color: var(--warn); }
+.resp-incomplete-mark { color: var(--warn); font-weight: 600; font-size: 11px; }
+.resp-incomplete-banner {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  color: var(--text-body);
+}
+.resp-incomplete-banner strong { color: var(--warn); }
 .resp-actions { margin: 16px 0 8px; }
 .resp-files { margin: 12px 0 16px; }
 .resp-file { gap: 8px; padding: 3px 0; }

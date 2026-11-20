@@ -94,6 +94,48 @@ const MATCHED_BY_LABELS = {
   manual: "Matched by hand",
 };
 
+// Marking a reply incomplete (tracking:mark-incomplete), from the Tracking
+// or Responses page: fills `cell` with a box for what was missing, and calls
+// onDone(true) once saved or onDone(false) on Cancel.
+function openIncompleteForm(cell, recipientId, who, onDone) {
+  cell.innerHTML = `
+    <div class="incomplete-form">
+      <p class="hint" style="margin-top:0">${escapeHtml(who)} will show as not responded, so you can resend or re-mail the form.
+        What they sent is kept, and a corrected reply marks them responded again.</p>
+      <div class="row">
+        <div class="field" style="flex:1">
+          <label>What was missing? (optional)</label>
+          <input type="text" class="incomplete-note-input" placeholder="e.g. didn't sign; left page 2 blank" />
+        </div>
+        <button class="btn incomplete-save" type="button" style="align-self:flex-end;margin-bottom:12px">Mark incomplete</button>
+        <button class="btn secondary incomplete-cancel" type="button" style="align-self:flex-end;margin-bottom:12px">Cancel</button>
+      </div>
+    </div>
+  `;
+  const input = qs(".incomplete-note-input", cell);
+  const save = qs(".incomplete-save", cell);
+  qs(".incomplete-cancel", cell).addEventListener("click", () => {
+    cell.innerHTML = "";
+    onDone(false);
+  });
+  async function submit() {
+    save.disabled = true;
+    try {
+      await window.api.markIncomplete(recipientId, input.value);
+      toast(`${who}'s reply marked incomplete — they now show as not responded.`);
+      onDone(true);
+    } catch (err) {
+      toast(`Couldn't mark incomplete: ${err.message}`, true);
+      save.disabled = false;
+    }
+  }
+  save.addEventListener("click", submit);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") submit();
+  });
+  input.focus();
+}
+
 // "1 change", "3 changes".
 function plural(n, one, many = `${one}s`) {
   return `${n.toLocaleString()} ${n === 1 ? one : many}`;
@@ -170,6 +212,7 @@ window.memberManagerNote = memberManagerNote;
 window.navigate = navigate;
 window.toast = toast;
 window.confirmAction = confirmAction;
+window.openIncompleteForm = openIncompleteForm;
 window.escapeHtml = escapeHtml;
 window.formatDate = formatDate;
 window.plural = plural;

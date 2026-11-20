@@ -1230,14 +1230,52 @@ handleEdit("tracking:undo-response", async (event, recipientId) => {
   }
 
   store.removeWhere("responses", (resp) => resp.mailingRecipientId === recipientId);
-  // Back to what they were before responding: sent (emailed, or a letter
-  // generated or mailed) or still pending.
-  const wasSent = !!(recipient.sentAt || recipient.mailedAt || recipient.generatedFilePath);
   return store.update("mailingRecipients", recipientId, {
-    status: wasSent ? "sent" : "pending",
+    status: statusBeforeResponding(recipient),
     enteredAt: null,
     previousEnteredAt: null,
+    incompleteAt: null,
+    incompleteNote: null,
   });
+});
+
+// What a recipient was before responding: sent (emailed, or a letter
+// generated or mailed) or still pending.
+function statusBeforeResponding(recipient) {
+  return recipient.sentAt || recipient.mailedAt || recipient.generatedFilePath ? "sent" : "pending";
+}
+
+// For a reply that came back missing answers they needed to give: puts the
+// recipient back to "no reply" so the form can be resent (or re-mailed) like
+// anyone else's, but keeps what they sent. Each of their responses so far is
+// tagged markedIncompleteAt, so it isn't the one shown once a corrected reply
+// comes in -- which, through the sync or Mark received, makes them
+// "responded" again. `note` says what was missing.
+handleEdit("tracking:mark-incomplete", async (event, recipientId, note) => {
+  const recipient = store.get("mailingRecipients", recipientId);
+  if (!recipient) throw new Error("Recipient not found.");
+  if (recipient.status !== "responded") throw new Error("This recipient hasn't responded.");
+  const now = new Date().toISOString();
+  store.updateWhere("responses", (resp) => resp.mailingRecipientId === recipientId && !resp.markedIncompleteAt && { markedIncompleteAt: now });
+  return store.update("mailingRecipients", recipientId, {
+    status: statusBeforeResponding(recipient),
+    enteredAt: null,
+    // As for a resubmission (recordWebResponse): the Responses page then
+    // notes that an earlier reply was entered.
+    previousEnteredAt: recipient.enteredAt || recipient.previousEnteredAt || null,
+    incompleteAt: now,
+    incompleteNote: String(note || "").trim(),
+  });
+});
+
+// Undoes tracking:mark-incomplete, while no corrected reply has come in.
+handleEdit("tracking:unmark-incomplete", async (event, recipientId) => {
+  const recipient = store.get("mailingRecipients", recipientId);
+  if (!recipient) throw new Error("Recipient not found.");
+  if (!recipient.incompleteAt || recipient.status === "responded") throw new Error("This recipient's reply isn't marked incomplete.");
+  const at = recipient.incompleteAt;
+  store.updateWhere("responses", (resp) => resp.mailingRecipientId === recipientId && resp.markedIncompleteAt === at && { markedIncompleteAt: null });
+  return store.update("mailingRecipients", recipientId, { status: "responded", incompleteAt: null, incompleteNote: null });
 });
 
 // Retries one recipient whose send failed, after saving a corrected email
@@ -1336,6 +1374,8 @@ ipcMain.handle("tracking:export", async (event, recipientIds, format) => {
       "Responded Via": latest ? latest.channel : "",
       "Responded At": latest ? latest.receivedAt : "",
       "Entered At": r.enteredAt || "",
+      "Marked Incomplete At": r.incompleteAt || "",
+      "Incomplete Note": r.incompleteNote || "",
       Token: r.responseToken,
     };
   });
@@ -1714,8 +1754,10 @@ handleEdit("gf:review-dismiss", async (event, reviewId) => {
 
 // The response shown for a recipient: their Gravity Forms submission if they
 // have one, since that's the one with answers to read; otherwise the latest.
+// Replies marked incomplete only count when there's nothing since.
 function pickResponse(responsesForRecipient) {
-  const newestFirst = [...responsesForRecipient].sort((a, b) => new Date(b.receivedAt) - new Date(a.receivedAt));
+  const current = responsesForRecipient.filter((r) => !r.markedIncompleteAt);
+  const newestFirst = [...(current.length ? current : responsesForRecipient)].sort((a, b) => new Date(b.receivedAt) - new Date(a.receivedAt));
   return newestFirst.find((r) => r.data && r.gfEntryId) || newestFirst[0] || null;
 }
 
@@ -1736,7 +1778,8 @@ async function loadFormFields(gf) {
 }
 
 // Everyone who has responded, oldest response first -- the order to work
-// through them in.
+// through them in. Replies marked incomplete are listed too, so they can
+// still be read, but there's nothing to enter until a corrected one comes.
 ipcMain.handle("responses:list", async () => {
   const contactById = new Map(store.list("contacts").map((c) => [c.id, c]));
   const mailingById = new Map(store.list("mailings").map((m) => [m.id, m]));
@@ -1747,7 +1790,7 @@ ipcMain.handle("responses:list", async () => {
   }
   return store
     .list("mailingRecipients")
-    .filter((r) => r.status === "responded")
+    .filter((r) => r.status === "responded" || (r.incompleteAt && responsesByRecipient.has(r.id)))
     .map((r) => {
       const response = pickResponse(responsesByRecipient.get(r.id) || []);
       const contact = contactById.get(r.contactId);
@@ -1760,6 +1803,7 @@ ipcMain.handle("responses:list", async () => {
         channel: response?.channel || "",
         receivedAt: response?.receivedAt || null,
         enteredAt: r.enteredAt || null,
+        incomplete: r.status !== "responded",
       };
     })
     .sort((a, b) => new Date(a.receivedAt) - new Date(b.receivedAt));
@@ -1775,7 +1819,7 @@ ipcMain.handle("responses:get", async (event, recipientId, responseId) => {
   const submissions = theirs
     .filter((r) => r.data && r.gfEntryId)
     .sort((a, b) => new Date(b.receivedAt) - new Date(a.receivedAt))
-    .map((r) => ({ responseId: r.id, receivedAt: r.receivedAt }));
+    .map((r) => ({ responseId: r.id, receivedAt: r.receivedAt, incomplete: !!r.markedIncompleteAt }));
   const contact = store.get("contacts", recipient.contactId);
   const mailing = store.get("mailings", recipient.mailingId);
   const gf = mailing?.gravityFormId ? store.get("gravityForms", mailing.gravityFormId) : null;
@@ -1790,6 +1834,10 @@ ipcMain.handle("responses:get", async (event, recipientId, responseId) => {
     formName: gf?.name || "",
     enteredAt: recipient.enteredAt || null,
     previousEnteredAt: recipient.previousEnteredAt || null,
+    responded: recipient.status === "responded",
+    incompleteAt: recipient.incompleteAt || null,
+    incompleteNote: recipient.incompleteNote || "",
+    responseIncomplete: !!response?.markedIncompleteAt,
     responseId: response?.id || null,
     submissions,
     channel: response?.channel || "",

@@ -6,6 +6,7 @@ function statusBadge(row) {
     const label = RESPONSE_CHANNEL_LABELS[via] || "Responded";
     return `<span class="badge badge-responded">${escapeHtml(label)}</span>`;
   }
+  if (isIncomplete(row)) return `<span class="badge badge-incomplete">Reply incomplete</span>`;
   if (row.channel === "paper") {
     if (row.mailedAt) return `<span class="badge badge-sent">Mailed — no reply</span>`;
     if (row.status === "sent") return `<span class="badge badge-pending">Letter ready — not mailed</span>`;
@@ -41,6 +42,13 @@ function isSendFailed(row) {
 // Emailed, but no reply yet -- the form can be sent to them again.
 function canResend(row) {
   return row.channel === "email" && row.status === "sent";
+}
+
+// Replied, but left out answers they needed to give, so they're treated as
+// not having replied (and can be sent the form again) until a corrected
+// reply comes in. What they sent is kept.
+function isIncomplete(row) {
+  return row.status !== "responded" && !!row.incompleteAt;
 }
 
 // Responded, but the response hasn't been entered into the office's records
@@ -101,6 +109,7 @@ window.Pages.tracking = {
             <select id="status-filter">
               <option value="all">All</option>
               <option value="not-responded">Not yet responded</option>
+              <option value="incomplete">Reply incomplete</option>
               <option value="responded">Responded</option>
               <option value="not-entered">Responded — not yet entered</option>
               <option value="entered">Entered</option>
@@ -169,6 +178,7 @@ window.Pages.tracking = {
       return rows.filter((r) => {
         if (statusFilter === "responded" && r.status !== "responded") return false;
         if (statusFilter === "not-responded" && r.status === "responded") return false;
+        if (statusFilter === "incomplete" && !isIncomplete(r)) return false;
         if (statusFilter === "not-entered" && !needsEntering(r)) return false;
         if (statusFilter === "entered" && !r.enteredAt) return false;
         if (statusFilter === "not-mailed" && !canMarkMailed(r)) return false;
@@ -191,11 +201,13 @@ window.Pages.tracking = {
       const notMailed = rows.filter(canMarkMailed).length;
       const failed = rows.filter(isSendFailed).length;
       const notEntered = rows.filter(needsEntering).length;
+      const incomplete = rows.filter(isIncomplete).length;
       qs("#stat-row", container).innerHTML = `
         <div class="stat-card"><div class="num">${total}</div><div class="label">Total recipients</div></div>
         <div class="stat-card"><div class="num">${responded}</div><div class="label">Responded</div></div>
         ${responded ? `<div class="stat-card"><div class="num">${notEntered}</div><div class="label">Responded, not yet entered</div></div>` : ""}
         <div class="stat-card"><div class="num">${total - responded}</div><div class="label">Not yet responded</div></div>
+        ${incomplete ? `<div class="stat-card stat-card-incomplete"><div class="num">${incomplete}</div><div class="label">Reply incomplete</div></div>` : ""}
         ${hasPaper ? `<div class="stat-card"><div class="num">${notMailed}</div><div class="label">Paper not yet mailed</div></div>` : ""}
         ${failed ? `<div class="stat-card stat-card-failed"><div class="num">${failed}</div><div class="label">Send failed</div></div>` : ""}
       `;
@@ -350,6 +362,8 @@ window.Pages.tracking = {
               ${detailRow("Member ID entered", r.response?.memberIdEntered)}
               ${detailRow("Response notes", r.response?.notes)}
               ${detailRow("Entered at", formatDate(r.enteredAt))}
+              ${detailRow(isIncomplete(r) ? "Reply marked incomplete" : "Earlier reply marked incomplete", formatDate(r.incompleteAt))}
+              ${r.incompleteAt ? detailRow("What was missing", r.incompleteNote) : ""}
             </table>
             ${
               r.attachments.length
@@ -375,6 +389,8 @@ window.Pages.tracking = {
                   : ""
               }
               ${canMarkRemailed(r) && r.resentAt ? `<button class="btn secondary" data-unremail="${r.id}" type="button">Undo re-mailed</button>` : ""}
+              ${r.status === "responded" ? `<button class="btn secondary" data-incomplete="${r.id}" type="button">Mark reply incomplete…</button>` : ""}
+              ${isIncomplete(r) ? `<button class="btn secondary" data-unincomplete="${r.id}" type="button">Undo incomplete</button>` : ""}
               ${r.status === "responded" ? `<button class="btn secondary" data-undo-response="${r.id}" type="button">Undo response</button>` : ""}
               <button class="btn secondary" data-remove="${r.id}" type="button">Remove from mailing</button>
             </div>
@@ -426,6 +442,10 @@ window.Pages.tracking = {
           }${r.channel === "email" && r.mailedAt ? `<br/><span class="hint">paper copy mailed ${escapeHtml(formatDate(r.mailedAt))}</span>` : ""}</td>
           <td>${statusBadge(r)}${
             isSendFailed(r) ? `<br/><span class="hint send-error" title="${escapeHtml(r.error)}">${escapeHtml(r.error)}</span>` : ""
+          }${
+            isIncomplete(r) && r.incompleteNote
+              ? `<br/><span class="hint incomplete-note" title="${escapeHtml(r.incompleteNote)}">${escapeHtml(r.incompleteNote)}</span>`
+              : ""
           }</td>
           <td>${
             r.status === "responded"
@@ -440,7 +460,11 @@ window.Pages.tracking = {
             ${canMarkMailed(r) ? `<button class="btn secondary" data-mailed="${r.id}" type="button">Mark as sent</button>` : ""}
             ${canMarkRemailed(r) ? `<button class="btn secondary" data-remailed="${r.id}" type="button">Mark re-mailed</button>` : ""}
             ${canMarkCopyMailed(r) ? `<button class="btn secondary" data-copy-mailed="${r.id}" type="button">Mark copy mailed</button>` : ""}
-            ${r.status === "responded" ? `<button class="btn secondary" data-view-response="${r.id}" type="button">View response</button>` : ""}
+            ${
+              r.status === "responded" || (isIncomplete(r) && r.response)
+                ? `<button class="btn secondary" data-view-response="${r.id}" type="button">View response</button>`
+                : ""
+            }
             ${
               r.status !== "responded"
                 ? `<button class="btn secondary" data-mark="${r.id}" type="button">Mark received…</button>`
@@ -527,7 +551,11 @@ window.Pages.tracking = {
           const r = rows.find((row) => row.id === btn.dataset.remove);
           const who = r?.contact?.name || "this recipient";
           const warning =
-            r?.status === "responded" ? "\n\nThey've already responded — their recorded response will be deleted too." : "";
+            r?.status === "responded"
+              ? "\n\nThey've already responded — their recorded response will be deleted too."
+              : r?.response
+              ? "\n\nTheir incomplete reply will be deleted too."
+              : "";
           if (!(await confirmAction(`Remove ${who} from "${r?.mailingName || "this mailing"}"?${warning}\n\nThis can't be undone.`, "Remove"))) return;
           await window.api.removeRecipient(btn.dataset.remove);
           if (expandedId === btn.dataset.remove) expandedId = null;
@@ -550,6 +578,33 @@ window.Pages.tracking = {
           try {
             await window.api.undoResponse(btn.dataset.undoResponse);
             toast(`${who} marked as not responded.`);
+          } catch (err) {
+            toast(`Couldn't undo: ${err.message}`, true);
+          }
+          await reload();
+        })
+      );
+      qsa("[data-incomplete]", body).forEach((btn) =>
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const r = rows.find((row) => row.id === btn.dataset.incomplete);
+          const row = qs(`#mark-form-${btn.dataset.incomplete}`, container);
+          row.style.display = "table-row";
+          openIncompleteForm(qs("td", row), btn.dataset.incomplete, r?.contact?.name || "This recipient", async (saved) => {
+            row.style.display = "none";
+            if (saved) await reload();
+          });
+        })
+      );
+      qsa("[data-unincomplete]", body).forEach((btn) =>
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          const r = rows.find((row) => row.id === btn.dataset.unincomplete);
+          const who = r?.contact?.name || "this recipient";
+          if (!(await confirmAction(`Count ${who}'s reply as a complete response again?`, "Undo incomplete"))) return;
+          try {
+            await window.api.unmarkIncomplete(btn.dataset.unincomplete);
+            toast(`${who} marked as responded again.`);
           } catch (err) {
             toast(`Couldn't undo: ${err.message}`, true);
           }

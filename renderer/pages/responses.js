@@ -56,7 +56,8 @@ window.Pages.responses = {
     function shownItems() {
       return items.filter((item) => {
         if (mailingFilter && item.mailingId !== mailingFilter) return false;
-        if (showFilter === "not-entered" && item.enteredAt) return false;
+        // A reply marked incomplete has nothing to enter until a corrected one comes.
+        if (showFilter === "not-entered" && (item.enteredAt || item.incomplete)) return false;
         if (searchTerm && !`${item.name} ${item.memberId}`.toLowerCase().includes(searchTerm)) return false;
         return true;
       });
@@ -64,7 +65,7 @@ window.Pages.responses = {
 
     function renderList() {
       const shown = shownItems();
-      const inMailing = items.filter((i) => !mailingFilter || i.mailingId === mailingFilter);
+      const inMailing = items.filter((i) => (!mailingFilter || i.mailingId === mailingFilter) && !i.incomplete);
       const waiting = inMailing.filter((i) => !i.enteredAt).length;
       qs("#resp-count", container).textContent = `${waiting} of ${inMailing.length} response${inMailing.length === 1 ? "" : "s"} not yet entered`;
       const list = qs("#resp-list", container);
@@ -75,7 +76,7 @@ window.Pages.responses = {
           <button type="button" class="resp-item ${item.recipientId === selectedId ? "selected" : ""}" data-id="${item.recipientId}">
             <span class="resp-item-name">${escapeHtml(item.name || "(no name)")}${
                 item.enteredAt ? ` <span class="resp-entered-mark" title="Entered ${escapeHtml(formatDate(item.enteredAt))}">✓ entered</span>` : ""
-              }</span>
+              }${item.incomplete ? ` <span class="resp-incomplete-mark" title="Marked incomplete — waiting for a corrected reply">incomplete</span>` : ""}</span>
             <span class="hint">${escapeHtml([item.memberId, RESPONSE_CHANNEL_LABELS[item.channel], formatDate(item.receivedAt)].filter(Boolean).join(" · "))}</span>
           </button>`
             )
@@ -220,7 +221,20 @@ window.Pages.responses = {
             : ""
         }
         ${
-          d.previousEnteredAt && !d.enteredAt
+          !d.responded
+            ? `<div class="resp-incomplete-banner">
+                <strong>Marked incomplete ${escapeHtml(formatDate(d.incompleteAt))}</strong>${d.incompleteNote ? ` — ${escapeHtml(d.incompleteNote)}` : ""}.
+                They show as not responded on the Tracking page, so the form can be resent or re-mailed. A corrected reply marks them responded again.
+                <button class="btn secondary copy-btn" id="resp-unincomplete" type="button">Undo incomplete</button>
+              </div>`
+            : d.incompleteAt
+            ? `<p class="hint resp-typed-note">An earlier reply was marked incomplete (${escapeHtml(formatDate(d.incompleteAt))})${
+                d.incompleteNote ? ` — ${escapeHtml(d.incompleteNote)}` : ""
+              }. ${d.responseIncomplete ? "This is that reply." : "This is their newer one."}</p>`
+            : ""
+        }
+        ${
+          d.responded && d.previousEnteredAt && !d.enteredAt
             ? `<p class="hint resp-typed-note">They submitted again after their earlier response was entered (${escapeHtml(
                 formatDate(d.previousEnteredAt)
               )}) — this newer submission hasn't been entered yet.</p>`
@@ -237,14 +251,16 @@ window.Pages.responses = {
                   (sub) =>
                     `<button class="btn secondary copy-btn" data-submission="${sub.responseId}" type="button">View ${
                       sub.responseId === d.submissions[0].responseId ? "latest" : "the one"
-                    } from ${escapeHtml(formatDate(sub.receivedAt))}</button>`
+                    } from ${escapeHtml(formatDate(sub.receivedAt))}${sub.incomplete ? " (incomplete)" : ""}</button>`
                 )
                 .join(" ")}</p>`
             : ""
         }
         <div class="row resp-actions">
           ${
-            d.enteredAt
+            !d.responded
+              ? ""
+              : d.enteredAt
               ? `<span class="badge badge-responded">Entered ${escapeHtml(formatDate(d.enteredAt))}</span>
                  <button class="btn secondary" id="resp-unenter" type="button">Mark not entered</button>`
               : `<button class="btn" id="resp-enter" type="button">Mark entered &amp; next</button>`
@@ -253,7 +269,9 @@ window.Pages.responses = {
           <button class="btn secondary" id="resp-next" type="button" ${nextId ? "" : "disabled"}>Next →</button>
           ${d.entryUrl ? `<button class="btn secondary" id="resp-wp" type="button">View in WordPress</button>` : ""}
           ${d.responseId ? `<button class="btn secondary" id="resp-attach" type="button">Attach file…</button>` : ""}
+          ${d.responded ? `<button class="btn secondary" id="resp-incomplete" type="button" title="They left out answers they needed to give — count them as not responded so the form can be sent again">Mark incomplete…</button>` : ""}
         </div>
+        <div id="resp-incomplete-form"></div>
         ${attachmentsHtml(d)}
         ${answersHtml(d)}
       `;
@@ -301,6 +319,27 @@ window.Pages.responses = {
         // showing, this one drops out of the list.
         const shown = shownItems();
         await select((shown.find((i) => i.recipientId === nextId) || shown[0])?.recipientId || null);
+      });
+      qs("#resp-incomplete", pane)?.addEventListener("click", () => {
+        openIncompleteForm(qs("#resp-incomplete-form", pane), d.recipientId, d.name || "This person", async (saved) => {
+          if (!saved) return;
+          await reloadList();
+          // As after "Mark entered & next": with "Not yet entered" showing,
+          // this one drops out of the list, so move on.
+          const shown = shownItems();
+          await select((shown.find((i) => i.recipientId === d.recipientId) || shown.find((i) => i.recipientId === nextId) || shown[0])?.recipientId || null);
+        });
+      });
+      qs("#resp-unincomplete", pane)?.addEventListener("click", async () => {
+        if (!(await confirmAction(`Count ${d.name ? `${d.name}'s` : "this"} reply as a complete response again?`, "Undo incomplete"))) return;
+        try {
+          await window.api.unmarkIncomplete(d.recipientId);
+          toast(`${d.name || "They"} marked as responded again.`);
+        } catch (err) {
+          toast(`Couldn't undo: ${err.message}`, true);
+        }
+        await reloadList();
+        await select(d.recipientId);
       });
       qs("#resp-unenter", pane)?.addEventListener("click", async () => {
         if (!(await confirmAction(`Mark ${d.name || "this response"} as not entered yet? (entered ${formatDate(d.enteredAt)})`, "Not entered"))) return;
